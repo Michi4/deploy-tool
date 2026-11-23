@@ -1,0 +1,165 @@
+# Rezept site-rescue-audit
+#
+# Rollt beide Skripte in EINEM Lauf aus:
+#   1. site-audit  -> /usr/local/bin/site-audit   (nur lesende Wochenpruefung)
+#   2. site-rescue -> /usr/local/bin/site-rescue  (ruft site-audit bei "audit" auf)
+#
+# Die Reihenfolge ist Absicht: erst das Ziel, dann der Aufrufer. So zeigt site-rescue
+# zu keinem Zeitpunkt auf eine Datei, die es noch nicht gibt. Beides haengt zusammen,
+# deshalb ein Rezept und nicht zwei: eine Sperre, ein Rollback-Satz, ein Status.
+#
+# Dazu: Benutzer rescue, Sudoers-Regel, fail2ban-Whitelist und ein temporaerer
+# Test-Schluessel, der nur waehrend der Tests in authorized_keys steht.
+#
+#   ./deploy.py plan --diff                       Probelauf beider Dateien
+#   ./deploy.py deploy                            ausrollen (TARGETS/RECIPE aus .env)
+#   ./deploy.py status                            Drift-Pruefung
+#   ./deploy.py test -s TEST_AUDIT=1              Tests inkl. echter Wochenpruefung
+#
+# Nutzlast liegt in scripts/ (Pfad ueber SCRIPTS_DIR, pro Profil aenderbar) -
+# dasselbe Rezept kann so fuer andere Server andere Skripte ausrollen.
+# Der handgepflegte Inhalt von ~rescue/.ssh/authorized_keys bleibt unberuehrt;
+# steht der Schluessel dort schon, wird der Block nicht doppelt eingetragen.
+
+[recipe]
+name = "site-rescue-audit"
+version = "2026-11-02"
+description = "site-rescue + site-audit gemeinsam ausrollen"
+requires = ["bash", "install", "sha256sum"]
+
+[vars.SCRIPTS_DIR]
+default = "./scripts"
+description = "Verzeichnis der Nutzlast-Skripte (pro Profil aenderbar)"
+
+[vars.WHITELIST_IP]
+default = ""
+description = "IP des Ueberwachungs-Macs (leer = kein from= und keine fail2ban-Regel)"
+
+# --- Vorpruefung -----------------------------------------------------------
+
+# Nur ein Hinweis: fehlt die Gruppe, scheitert useradd gleich danach mit einer
+# weniger klaren Meldung. Auf den neuen Servern ist das der einzige Stolperstein.
+[[preflight]]
+name = "Gruppe fuer den rescue-Zugang vorhanden"
+level = "warn"
+hint = "Gruppe fehlt: groupadd <gruppe> oder SYSTEM_USER_GROUPS in .env anpassen"
+run = "getent group {{SYSTEM_USER_GROUPS|q}} >/dev/null"
+
+# --- Dateien ---------------------------------------------------------------
+#
+# on_conflict = "overwrite": diese drei Pfade gehoeren dem Rezept. Ein Probelauf
+# zeigt Abweichungen vorher, vor jedem Schreibvorgang wird gesichert, und der
+# Wechsel vom alten Einzel-Push laeuft dadurch ohne Rueckfrage durch.
+
+[[files]]
+src = "{{SCRIPTS_DIR}}/site-audit"
+dest = "/usr/local/bin/site-audit"
+mode = "0755"
+owner = "root"
+group = "root"
+validate = "bash -n {{FILE}}"
+on_conflict = "overwrite"
+description = "site-audit (nur lesend, wird von site-rescue aufgerufen)"
+
+[[files]]
+src = "{{SCRIPTS_DIR}}/site-rescue"
+dest = "/usr/local/bin/site-rescue"
+mode = "0755"
+owner = "root"
+group = "root"
+validate = "bash -n {{FILE}}"
+on_conflict = "overwrite"
+description = "site-rescue (diag / block / unblock / audit / restart-pool)"
+
+[[files]]
+content = "{{SUDOERS_CONTENT}}\n"
+dest = "/etc/sudoers.d/{{SUDOERS_NAME}}"
+mode = "0440"
+owner = "root"
+group = "root"
+validate = "visudo -cf {{FILE}}"
+on_conflict = "overwrite"
+description = "Sudoers-Regel fuer den rescue-Zugang (env_keep fuer SSH_ORIGINAL_COMMAND)"
+
+# --- Benutzer und Schluessel ----------------------------------------------
+
+[[users]]
+name = "{{SYSTEM_USER}}"
+system = true
+shell = "/bin/bash"
+groups = ["{{SYSTEM_USER_GROUPS}}"]
+create_home = true
+lock_password = true
+description = "SSH-Zugang nur fuer site-rescue"
+
+# Fester Schluessel des Ueberwachungs-Macs. Wird nur eingetragen, wenn
+# RESCUE_PUBKEY im Profil gesetzt ist. Steht der Schluessel auf einem Host
+# bereits in authorized_keys (handgepflegt), bleibt das so - kein Doppel-Eintrag.
+[[authorized_keys]]
+user = "{{SYSTEM_USER}}"
+keys = '''{{RESCUE_PUBKEY}}'''
+command = "sudo /usr/local/bin/site-rescue"
+restrict = true
+from = "{{WHITELIST_IP}}"
+id = "rescue-key"
+if_var = "RESCUE_PUBKEY"
+description = "fester Schluessel des Ueberwachungs-Macs"
+
+# Nur der temporaere Test-Schluessel (kein keys = kein Dauer-Eintrag).
+# Der Aufbau ist derselbe wie beim echten Zugang, die Tests laufen also
+# wirklich durch Forced Command -> sudo -> site-rescue.
+[[authorized_keys]]
+user = "{{SYSTEM_USER}}"
+command = "sudo /usr/local/bin/site-rescue"
+restrict = true
+id = "test-key"
+ephemeral_test_key = true
+description = "temporaerer Test-Schluessel (nur waehrend der Tests)"
+
+# --- Betrieb ---------------------------------------------------------------
+
+[[steps]]
+name = "Fail2ban-Whitelist fuer die Ueberwachungs-IP"
+if_var = "WHITELIST_IP"
+sudo = true
+unless_cmd = '''test -f /etc/fail2ban/jail.d/99-deploy-whitelist.local && grep -qF -- {{WHITELIST_IP|q}} /etc/fail2ban/jail.d/99-deploy-whitelist.local'''
+run = '''
+if [ -d /etc/fail2ban/jail.d ]; then
+    printf '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1 %s\n' {{WHITELIST_IP|q}} > /etc/fail2ban/jail.d/99-deploy-whitelist.local
+    timeout 8 fail2ban-client reload >/dev/null 2>&1 || true
+fi
+if command -v cscli >/dev/null 2>&1; then
+    cscli decisions list --ip {{WHITELIST_IP|q}} >/dev/null 2>&1 || true
+fi
+'''
+
+# --- Tests -----------------------------------------------------------------
+
+[[tests]]
+name = "beide Skripte installiert, ausfuehrbar und syntaktisch gueltig"
+run = "test -x /usr/local/bin/site-audit && test -x /usr/local/bin/site-rescue && bash -n /usr/local/bin/site-audit && bash -n /usr/local/bin/site-rescue && echo install-ok"
+expect = ["^install-ok$"]
+
+# Prueft den echten Weg: Forced Command -> sudo -> site-rescue.
+# "diag" ohne Domain endet absichtlich mit rc=1 und "fehler=domain ...".
+[[tests]]
+name = "rescue-Zugang: Forced Command, sudo und site-rescue antworten"
+kind = "ssh"
+user = "{{SYSTEM_USER}}"
+key = "ephemeral"
+run = "diag"
+expect_rc = 1
+expect = ["^fehler=domain"]
+
+# Laeuft nur mit -s TEST_AUDIT=1: die echte Wochenpruefung (langsam, braucht
+# ausgehendes HTTPS). Nicht kritisch, damit ein Netzproblem keinen Rollback ausloest.
+[[tests]]
+name = "Wochenpruefung: site-rescue reicht audit an site-audit weiter"
+kind = "ssh"
+user = "{{SYSTEM_USER}}"
+key = "ephemeral"
+run = "audit"
+expect = ["^H\\|done\\|"]
+timeout = 1800
+critical = false
+if_var = "TEST_AUDIT"
