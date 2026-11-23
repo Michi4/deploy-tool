@@ -147,7 +147,7 @@ expect = ["^dirs-ok$"]
 [[tests]]
 name = "User locked"
 run = "passwd -S {{ACME_USER}} | awk '{print $2}'"
-expect = ["^L$"]
+expect = ["^(L|LK)$"]
 
 [[tests]]
 name = "Forced command responds"
