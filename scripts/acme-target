@@ -1,0 +1,121 @@
+#!/bin/bash
+# acme-target - nimmt ein Zertifikat vom Zertifikats-Host an und legt es unter /etc/ssl ab.
+#
+# Aufruf ausschliesslich ueber den Forced Command des Benutzers acmepush:
+#   command="sudo -n /usr/local/sbin/acme-target",restrict
+# Der Auftrag steht in SSH_ORIGINAL_COMMAND:
+#   status
+#   install <name>    tar.gz mit cert.pem, chain.pem, privkey.pem auf stdin
+#
+# <name> ist auf /etc/ssl/<name>.crt|.key|.ca beschraenkt (kein Pfad, kein "..").
+# Fuer das Wildcard heisst <name> "wildcard.example.com" - genau die Dateien,
+# die die Vhosts schon verwenden.
+#
+# Geprueft wird: Zertifikat lesbar und nicht abgelaufen, Key passt zum Zert.
+# Danach apache2ctl/httpd -t und reload. Schlaegt das fehl, werden die alten
+# Dateien zurueckgespielt.
+#
+# Test ohne Server:
+#   ACME_PREFIX=/tmp/acmet ACME_NO_RELOAD=1 ./scripts/acme-target status
+#   ACME_PREFIX=/tmp/acmet ACME_NO_RELOAD=1 ./scripts/acme-target install test.example.com < bundle.tgz
+set -u
+export LC_ALL=C
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+PREFIX="${ACME_PREFIX:-}"
+NO_RELOAD="${ACME_NO_RELOAD:-0}"
+SSLDIR="${PREFIX}/etc/ssl"
+BK="${PREFIX}/var/backups/acme-target"
+LOG="${PREFIX}/var/log/acme-target.log"
+TS="$(date +%Y%m%d-%H%M%S)"
+
+log() {
+    mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+    printf '%s %s %s\n' "$(date '+%F %T')" "${SSH_CLIENT:-local}" "$*" >>"$LOG" 2>/dev/null || true
+}
+die() { printf 'fehler=%s\n' "$*"; log "FEHLER $*"; exit 1; }
+ok()  { log "$*"; printf 'ok=%s\n' "$*"; }
+
+read -r -a A <<< "${SSH_ORIGINAL_COMMAND:-$*}"
+CMD="${A[0]:-}"
+NAME="${A[1]:-}"
+
+reload_apache() {
+    [ "$NO_RELOAD" = 1 ] && return 0
+    if command -v apache2ctl >/dev/null 2>&1; then
+        apache2ctl -t >/dev/null 2>&1 || return 1
+    elif command -v httpd >/dev/null 2>&1; then
+        httpd -t >/dev/null 2>&1 || return 1
+    elif command -v apachectl >/dev/null 2>&1; then
+        apachectl -t >/dev/null 2>&1 || return 1
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl reload apache2 >/dev/null 2>&1 && return 0
+        systemctl reload httpd >/dev/null 2>&1 && return 0
+    fi
+    if command -v apache2ctl >/dev/null 2>&1; then apache2ctl graceful >/dev/null 2>&1; return $?; fi
+    if command -v apachectl >/dev/null 2>&1; then apachectl graceful >/dev/null 2>&1; return $?; fi
+    return 0
+}
+
+restore_old() {
+    local ext
+    for ext in crt key ca; do
+        if [ -f "$BK/$NAME.$ext.$TS" ]; then
+            cp -a "$BK/$NAME.$ext.$TS" "$SSLDIR/$NAME.$ext"
+        else
+            rm -f "$SSLDIR/$NAME.$ext"
+        fi
+    done
+}
+
+case "$CMD" in
+status)
+    printf 'ok=acme-target v1\n'
+    exit 0
+    ;;
+
+install)
+    [[ "$NAME" =~ ^[a-z0-9][a-z0-9.-]{0,200}$ ]] || die "name ungueltig"
+    [[ "$NAME" != *..* ]] || die "name ungueltig"
+
+    umask 077
+    T=$(mktemp -d) || die "mktemp fehlgeschlagen"
+    trap 'rm -rf "$T"' EXIT
+    tar --no-same-owner --no-same-permissions -xzf - -C "$T" || die "tar-Archiv ungueltig"
+    [ -s "$T/cert.pem" ] || die "cert.pem fehlt"
+    [ -s "$T/chain.pem" ] || die "chain.pem fehlt"
+    [ -s "$T/privkey.pem" ] || die "privkey.pem fehlt"
+
+    openssl x509 -in "$T/cert.pem" -noout -checkend 0 >/dev/null 2>&1 \
+        || die "Zertifikat ungueltig oder abgelaufen"
+    a=$(openssl x509 -in "$T/cert.pem" -noout -pubkey 2>/dev/null | openssl sha256 2>/dev/null)
+    b=$(openssl pkey -in "$T/privkey.pem" -pubout 2>/dev/null | openssl sha256 2>/dev/null)
+    [ -n "$a" ] && [ "$a" = "$b" ] || die "privkey.pem passt nicht zum Zertifikat"
+
+    mkdir -p "$BK" "$SSLDIR"
+    for ext in crt key ca; do
+        [ -f "$SSLDIR/$NAME.$ext" ] && cp -a "$SSLDIR/$NAME.$ext" "$BK/$NAME.$ext.$TS"
+    done
+
+    install -m 0644 "$T/cert.pem" "$SSLDIR/$NAME.crt.new"
+    install -m 0600 "$T/privkey.pem" "$SSLDIR/$NAME.key.new"
+    install -m 0644 "$T/chain.pem" "$SSLDIR/$NAME.ca.new"
+    mv -f "$SSLDIR/$NAME.crt.new" "$SSLDIR/$NAME.crt"
+    mv -f "$SSLDIR/$NAME.key.new" "$SSLDIR/$NAME.key"
+    mv -f "$SSLDIR/$NAME.ca.new" "$SSLDIR/$NAME.ca"
+    command -v restorecon >/dev/null 2>&1 && restorecon "$SSLDIR/$NAME".crt "$SSLDIR/$NAME".key "$SSLDIR/$NAME".ca >/dev/null 2>&1 || true
+
+    if ! reload_apache; then
+        restore_old
+        die "apache-configtest/reload fehlgeschlagen (alte Dateien zurueckgespielt)"
+    fi
+
+    ls -1t "$BK/$NAME".*.* 2>/dev/null | sed -e '1,30d' | xargs -r rm -f
+    ok "installed name=$NAME"
+    ;;
+
+*)
+    die "erlaubt: status | install <name>"
+    ;;
+esac
