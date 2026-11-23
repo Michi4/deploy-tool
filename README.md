@@ -1,55 +1,54 @@
 # deploy-tool
 
-**Kurz:** Dateien, Benutzer und Rechte per Rezept auf viele Linux-Server
-bringen - idempotent, nachvollziehbar und mit Rollback.
+**In short:** Put files, users and permissions on many Linux servers from a
+recipe - idempotent, traceable and with rollback.
 
-**Im Detail:** Ein Rezept beschreibt, *was* passiert (Pfade, Rechte,
-Validierung, Tests). Ein Profil beschreibt, *wo* es passiert (Hosts, Zugang,
-Werte). `deploy.py` vergleicht zuerst den Ist-Zustand per SHA-256, schreibt nur
-Abweichungen, sichert die Vorgaengerdatei und rollt bei einem kritischen
-Testfehler zurueck. Mehrere Hosts laufen parallel; jeder bekommt eine eigene
-Zusammenfassung. Reines Python (>= 3.11, Standardbibliothek), keine
-Abhaengigkeiten, keine Agents auf den Servern.
+**In detail:** A recipe describes *what* happens (paths, permissions,
+validation, tests). A profile describes *where* it happens (hosts, access,
+values). `deploy.py` first compares the actual state via SHA-256, writes only
+differences, backs up the previous file and rolls back on a critical test
+failure. Multiple hosts run in parallel; each gets its own summary. Pure Python
+(>= 3.11, standard library), no dependencies, no agents on the servers.
 
-## Zwei Repos, ein Weg
+## Two repos, one path
 
-`deploy-tool` ist die allgemeine Deployment-Seite. Das Rezept `acme-target`
-bereitet Hosts fuer [acme-rollout](https://github.com/Michi4/acme-rollout) vor:
-Es legt den Benutzer `acmepush`, den Forced Command und die Sudoers-Regel an,
-die ein Zertifikats-Bundle annehmen. `acme-rollout` stellt die Zertifikate aus
-und schickt sie ueber genau diesen Weg.
+`deploy-tool` is the general deployment side. The `acme-target` recipe prepares
+hosts for [acme-rollout](https://github.com/Michi4/acme-rollout): it creates the
+`acmepush` user, the forced command and the sudoers rule that accept a
+certificate bundle. `acme-rollout` issues the certificates and sends them
+through exactly this path.
 
 ```
 deploy-tool                          acme-rollout
 recipes/acme-target                  acme.sh + deploy hook
         │                                     │
-        │  richtet Empfaenger ein             │  stellt aus und pusht
+        │  sets up the receiver               │  issues and pushes
         └───────────────┐                     │
                         ▼                     ▼
                  ┌──────────────────────────────────┐
-                 │ Zielhost                         │
+                 │ Target host                      │
                  │ acmepush -> acme-target          │
                  │ /etc/ssl/<name>.{crt,key,ca}     │
                  └──────────────────────────────────┘
 ```
 
-Beide Repos funktionieren fuer sich. Zusammen ergeben sie den vollstaendigen
-Weg von der Ausstellung bis zur Datei auf dem Webserver.
+Both repos work on their own. Together they form the complete path from
+issuance to the file on the web server.
 
-## Ebenen
+## Layers
 
 ```
-.env                         nur PROFILE: welches Profil ohne -p gilt
-profiles/<name>.env          Ziele, Zugang und Werte (nicht im Repo)
-recipes/<name>/recipe.toml   Ablauf, datenlos, nur {{PLATZHALTER}}
-scripts/                     Nutzlast
-keys/                        Public Keys
+.env                         only PROFILE: which profile applies without -p
+profiles/<name>.env          targets, access and values (not in the repo)
+recipes/<name>/recipe.toml   flow, data-free, only {{PLACEHOLDERS}}
+scripts/                     payload
+keys/                        public keys
 ```
 
-Merksatz: Ein Rezept enthaelt keine Servernamen, ein Profil keine Logik.
-Vorrang bei gleichem Namen: CLI > Profil > `.env` > Standard.
+Rule of thumb: a recipe contains no server names, a profile contains no logic.
+Precedence for the same name: CLI > profile > `.env` > default.
 
-## Schnellstart
+## Quick start
 
 ```bash
 cp .env.example .env
@@ -61,66 +60,66 @@ $EDITOR .env profiles/local.env
 ./deploy.py deploy -p local
 ```
 
-`-p local` legt `profiles/local.env` ueber `.env`. Ohne `-p` gilt `PROFILE` aus
-`.env`. `profiles/*.env` ist von Git ausgeschlossen; nur die Dateien mit
-`example` sind Vorlagen. Vor dem ersten echten Lauf `SSH_KEY`, `TARGETS` und
-die Werte im Profil anpassen.
+`-p local` layers `profiles/local.env` over `.env`. Without `-p`, the `PROFILE`
+from `.env` applies. `profiles/*.env` is excluded from Git; only files with
+`example` in the name are templates. Before the first real run, adjust
+`SSH_KEY`, `TARGETS` and the values in the profile.
 
-## Befehle
+## Commands
 
-| Zweck | Aufruf |
+| Purpose | Call |
 |---|---|
-| Menue | `./deploy.py` |
-| Aenderungen zeigen | `./deploy.py plan -p local` |
-| Ausrollen | `./deploy.py deploy -p local` |
-| Drift pruefen | `./deploy.py status -p local` |
+| Menu | `./deploy.py` |
+| Show changes | `./deploy.py plan -p local` |
+| Roll out | `./deploy.py deploy -p local` |
+| Check drift | `./deploy.py status -p local` |
 | Tests | `./deploy.py test -p local` |
-| Lokal pruefen | `./deploy.py selftest` |
-| Rezepte / Profile | `./deploy.py recipes` / `./deploy.py profiles` |
-| Eine Datei | `./deploy.py push datei --dest /pfad` |
-| Befehl remote | `./deploy.py run -p local -- 'uptime'` |
-| Variablenhilfe | `./deploy.py help-env` |
+| Check locally | `./deploy.py selftest` |
+| Recipes / profiles | `./deploy.py recipes` / `./deploy.py profiles` |
+| Single file | `./deploy.py push file --dest /path` |
+| Remote command | `./deploy.py run -p local -- 'uptime'` |
+| Variable reference | `./deploy.py help-env` |
 
-`-j 1` bis `-j 16` steuert die Parallelitaet (Standard 4). `-t host1,host2`
-zeigt einen Lauf auf andere Ziele, ohne das Profil zu aendern. `-s NAME=WERT`
-ueberschreibt einzelne Werte.
+`-j 1` to `-j 16` controls parallelism (default 4). `-t host1,host2` runs
+against other targets without changing the profile. `-s NAME=VALUE` overrides
+individual values.
 
-## Ablauf pro Host
+## Run per host
 
-1. Verbindung, Programmpruefung, `[[preflight]]`
-2. Soll-Ist-Vergleich per SHA-256; identische Dateien werden uebersprungen
-3. Schreiben in eine temporaere Datei, Rechte setzen, `validate`, atomar per `mv`
-4. Backup der Vorgaengerdatei und Eintrag im Register
-5. `[[tests]]`; bei einem kritischen Fehlschlag Rollback der geaenderten Dateien
-6. Zusammenfassung je Host: `STATUS` (OK/FAIL) getrennt von `TEST` (PASS/WARN/FAIL/SKIP)
+1. Connection, program check, `[[preflight]]`
+2. Target/actual comparison via SHA-256; identical files are skipped
+3. Write to a temporary file, set permissions, `validate`, atomically via `mv`
+4. Back up the previous file and record it in the registry
+5. `[[tests]]`; a critical failure rolls back the changed files
+6. Summary per host: `STATUS` (OK/FAIL) separate from `TEST` (PASS/WARN/FAIL/SKIP)
 
-`plan` und `status` schreiben nichts. `--force` erzwingt ein Update auch bei
-identischem Inhalt. Wiederholte Laeufe sind gefahrlos.
+`plan` and `status` write nothing. `--force` forces an update even when the
+content is identical. Repeated runs are safe.
 
-## Profile
+## Profiles
 
-`profiles/example.env` zeigt `site-rescue-audit`, `profiles/example-acme.env`
-zeigt `acme-target`. Die wichtigsten Werte:
+`profiles/example.env` shows `site-rescue-audit`,
+`profiles/example-acme.env` shows `acme-target`. The most important values:
 
-| Wert | Bedeutung |
+| Value | Meaning |
 |---|---|
-| `RECIPE`, `TARGETS` | Rezept und Zielhosts |
-| `SSH_USER`, `SSH_KEY`, `SSH_PORT` | Zugang zum Zielhost |
-| `SYSTEM_USER`, `SYSTEM_USER_GROUPS` | Benutzer, den das Rezept anlegt |
-| `WHITELIST_IP`, `RESCUE_PUBKEY` | erlaubte Quell-IP und Public Key |
-| `SUDOERS_NAME`, `SUDOERS_CONTENT` | Sudoers-Datei und Inhalt |
-| `ACME_USER`, `ACME_PUSH_PUBKEY`, `ACME_PUSH_IP` | Empfaenger fuer acme-rollout |
-| `SCRIPTS_DIR`, `BIN_DIR` | Nutzlast und Zielverzeichnis |
-| `ALLOW_EXISTING_USER`, `ROLLBACK_ON_FAIL` | Verhalten des Laufs |
+| `RECIPE`, `TARGETS` | Recipe and target hosts |
+| `SSH_USER`, `SSH_KEY`, `SSH_PORT` | Access to the target host |
+| `SYSTEM_USER`, `SYSTEM_USER_GROUPS` | User that the recipe creates |
+| `WHITELIST_IP`, `RESCUE_PUBKEY` | Allowed source IP and public key |
+| `SUDOERS_NAME`, `SUDOERS_CONTENT` | Sudoers file and content |
+| `ACME_USER`, `ACME_PUSH_PUBKEY`, `ACME_PUSH_IP` | Receiver for acme-rollout |
+| `SCRIPTS_DIR`, `BIN_DIR` | Payload and destination directory |
+| `ALLOW_EXISTING_USER`, `ROLLBACK_ON_FAIL` | Behaviour of the run |
 
-## Rezepte
+## Recipes
 
-| Rezept | Zweck |
+| Recipe | Purpose |
 |---|---|
-| `acme-target` | Zertifikatsempfaenger fuer acme-rollout: Benutzer, Forced Command, Sudoers, Annahme unter `/etc/ssl` |
-| `site-rescue-audit` | `site-rescue` und `site-audit` inkl. Benutzer, Sudoers, Whitelist und Tests |
-| `one-script` | Vorlage: eine Datei an einen Zielpfad |
-| `push` | Ad-hoc-Einzeldatei, Werte kommen von der Kommandozeile |
+| `acme-target` | Certificate receiver for acme-rollout: user, forced command, sudoers, acceptance under `/etc/ssl` |
+| `site-rescue-audit` | `site-rescue` and `site-audit` including user, sudoers, whitelist and tests |
+| `one-script` | Template: one file to a target path |
+| `push` | Ad-hoc single file, values come from the command line |
 
 ```bash
 ./deploy.py plan   -r acme-target -p example-acme
@@ -131,76 +130,75 @@ zeigt `acme-target`. Die wichtigsten Werte:
 ./deploy.py test   -p example -s TEST_AUDIT=1 -t web1.example.com
 ```
 
-`site-audit` prueft einen Webserver nur lesend (Versionen, Updates, verdaechtige
-Prozesse, CMS- und Webshell-Muster). `site-rescue` ist der Gegenpart fuer den
-Betrieb: `diag`, `block`, `unblock`, `audit`, `restart-pool` - erreichbar nur
-ueber den Forced Command des Benutzers `rescue`.
+`site-audit` checks a web server read-only (versions, updates, suspicious
+processes, CMS and webshell patterns). `site-rescue` is the counterpart for
+operations: `diag`, `block`, `unblock`, `audit`, `restart-pool` - reachable only
+through the forced command of the `rescue` user.
 
-## Neuer Server
+## New server
 
-In `TARGETS` des Profils aufnehmen und `deploy` erneut ausfuehren. Der Lauf ist
-idempotent: Fehlendes wird angelegt, Gleiches bleibt unberuehrt, Abweichendes
-wird gesichert und ersetzt.
+Add it to `TARGETS` in the profile and run `deploy` again. The run is
+idempotent: missing items are created, identical items stay untouched,
+divergent items are backed up and replaced.
 
-## Neues Profil
+## New profile
 
 ```bash
-cp profiles/example.env profiles/kunde.env
-$EDITOR profiles/kunde.env
-./deploy.py plan -p kunde
+cp profiles/example.env profiles/customer.env
+$EDITOR profiles/customer.env
+./deploy.py plan -p customer
 ```
 
-Pflicht je nach Rezept: `RECIPE`, `TARGETS`, `SSH_USER`, `SSH_KEY`.
-`SCRIPTS_DIR` waehlt eine andere Nutzlast fuer dasselbe Rezept.
+Required depending on the recipe: `RECIPE`, `TARGETS`, `SSH_USER`, `SSH_KEY`.
+`SCRIPTS_DIR` selects a different payload for the same recipe.
 
-## Neues Rezept
+## New recipe
 
-`recipes/one-script/` ist die Vorlage fuer eine Datei,
-`recipes/site-rescue-audit/` die fuer zwei zusammenhaengende Dateien. Kopieren,
-Platzhalter benennen, Skripte in `scripts/` legen, `selftest` laufen lassen.
+`recipes/one-script/` is the template for one file,
+`recipes/site-rescue-audit/` the template for two related files. Copy it, name
+the placeholders, put the scripts into `scripts/`, run `selftest`.
 
-Wichtige Felder pro `[[files]]`:
+Important fields per `[[files]]`:
 
-| Feld | Bedeutung |
+| Field | Meaning |
 |---|---|
-| `src`, `dest` | Quelle und Ziel, Platzhalter erlaubt |
-| `mode`, `owner`, `group` | Rechte; Sudoers-Dateien `0440` |
-| `validate` | Pruefung vor dem Schreiben (`bash -n {{FILE}}`, `visudo -cf {{FILE}}`) |
-| `on_conflict` | `fail`, `keep` oder `overwrite` |
-| `unless_cmd` | Schritt ueberspringen, wenn der Befehl Erfolg meldet |
-| `description` | Klartext in der Ausgabe |
+| `src`, `dest` | Source and destination, placeholders allowed |
+| `mode`, `owner`, `group` | Permissions; sudoers files `0440` |
+| `validate` | Check before writing (`bash -n {{FILE}}`, `visudo -cf {{FILE}}`) |
+| `on_conflict` | `fail`, `keep` or `overwrite` |
+| `unless_cmd` | Skip the step if the command reports success |
+| `description` | Plain text in the output |
 
 ## Tests
 
-`selftest` prueft Rezepte, Platzhalter, Quellen, Rechte und Checksummen, ohne
-einen Server zu beruehren. `selftest --ssh` ergaenzt einen lesenden
-Verbindungstest. `test` fuehrt die `[[tests]]` eines Rezepts aus;
-`critical = false` macht einen Fehlschlag zur Warnung, `-s TEST_AUDIT=1`
-aktiviert optionale Langlauftests.
+`selftest` checks recipes, placeholders, sources, permissions and checksums
+without touching a server. `selftest --ssh` adds a read-only connection test.
+`test` runs the `[[tests]]` of a recipe; `critical = false` turns a failure into
+a warning, `-s TEST_AUDIT=1` enables optional long-running tests.
 
-## Sicherheit
+## Security
 
-- Profile und `.env` enthalten Zugangsdaten und sind nicht im Repo.
-- `keys/` enthaelt nur Public Keys; der private Key bleibt lokal.
-- Sudoers-Dateien werden vor dem Aktivieren mit `visudo -cf` geprueft.
-- Aenderungen werden gesichert; kritische Testfehler loesen einen Rollback aus.
-- Der Empfaenger `acme-target` akzeptiert nur `status` und `install <name>` und
-  schreibt ausschliesslich nach `/etc/ssl`.
+- Profiles and `.env` contain credentials and are not in the repo.
+- `keys/` contains only public keys; the private key stays local.
+- Sudoers files are checked with `visudo -cf` before activation.
+- Changes are backed up; critical test failures trigger a rollback.
+- The `acme-target` receiver accepts only `status` and `install <name>` and
+  writes exclusively to `/etc/ssl`.
 
 ## Layout
 
 ```
 deploy.py                     CLI
-.env.example                  Vorlage fuer PROFILE
-profiles/example.env          Beispiel: site-rescue-audit
-profiles/example-acme.env     Beispiel: acme-target
-recipes/acme-target/          Zertifikatsempfaenger
+.env.example                  template for PROFILE
+profiles/example.env          example: site-rescue-audit
+profiles/example-acme.env     example: acme-target
+recipes/acme-target/          certificate receiver
 recipes/site-rescue-audit/    site-rescue + site-audit
-recipes/one-script/           Vorlage
-recipes/push/                 Einzeldatei
-scripts/acme-target           Empfaenger-Skript
-scripts/site-audit            lesende Wochenpruefung
-scripts/site-rescue           Betriebshilfe
-scripts/example.sh            Platzhalter
-keys/example_key.pub          Wegwerf-Public-Key fuer die Beispiele
+recipes/one-script/           template
+recipes/push/                 single file
+scripts/acme-target           receiver script
+scripts/site-audit            read-only weekly check
+scripts/site-rescue           operations helper
+scripts/example.sh            placeholder
+keys/example_key.pub          throwaway public key for the examples
 ```

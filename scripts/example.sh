@@ -1,5 +1,5 @@
 #!/bin/bash
-# Platzhalter-Nutzlast der Vorlage "one-script".
-# Beim Anlegen eines echten Rezepts diese Datei ersetzen.
+# Placeholder payload for the "one-script" template.
+# Replace this file when creating a real recipe.
 set -eu
 echo "example ok $(date '+%F %T')"

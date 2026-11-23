@@ -1,55 +1,56 @@
-# Rezept site-rescue-audit
+# Recipe site-rescue-audit
 #
-# Rollt beide Skripte in EINEM Lauf aus:
-#   1. site-audit  -> /usr/local/bin/site-audit   (nur lesende Wochenpruefung)
-#   2. site-rescue -> /usr/local/bin/site-rescue  (ruft site-audit bei "audit" auf)
+# Deploys both scripts in ONE run:
+#   1. site-audit  -> /usr/local/bin/site-audit   (read-only weekly check)
+#   2. site-rescue -> /usr/local/bin/site-rescue  (calls site-audit on "audit")
 #
-# Die Reihenfolge ist Absicht: erst das Ziel, dann der Aufrufer. So zeigt site-rescue
-# zu keinem Zeitpunkt auf eine Datei, die es noch nicht gibt. Beides haengt zusammen,
-# deshalb ein Rezept und nicht zwei: eine Sperre, ein Rollback-Satz, ein Status.
+# The order is intentional: first the target, then the caller. That way
+# site-rescue never points at a file that does not exist yet. Both belong
+# together, hence one recipe instead of two: one lock, one rollback set, one
+# status.
 #
-# Dazu: Benutzer rescue, Sudoers-Regel, fail2ban-Whitelist und ein temporaerer
-# Test-Schluessel, der nur waehrend der Tests in authorized_keys steht.
+# Plus: user rescue, sudoers rule, fail2ban whitelist and a temporary test key
+# that is present in authorized_keys only during the tests.
 #
-#   ./deploy.py plan --diff                       Probelauf beider Dateien
-#   ./deploy.py deploy                            ausrollen (TARGETS/RECIPE aus .env)
-#   ./deploy.py status                            Drift-Pruefung
-#   ./deploy.py test -s TEST_AUDIT=1              Tests inkl. echter Wochenpruefung
+#   ./deploy.py plan --diff                       dry run of both files
+#   ./deploy.py deploy                            roll out (TARGETS/RECIPE from .env)
+#   ./deploy.py status                            drift check
+#   ./deploy.py test -s TEST_AUDIT=1              tests incl. the real weekly check
 #
-# Nutzlast liegt in scripts/ (Pfad ueber SCRIPTS_DIR, pro Profil aenderbar) -
-# dasselbe Rezept kann so fuer andere Server andere Skripte ausrollen.
-# Der handgepflegte Inhalt von ~rescue/.ssh/authorized_keys bleibt unberuehrt;
-# steht der Schluessel dort schon, wird der Block nicht doppelt eingetragen.
+# The payload lives in scripts/ (path via SCRIPTS_DIR, changeable per profile) -
+# so the same recipe can deploy different scripts for different servers.
+# The hand-maintained content of ~rescue/.ssh/authorized_keys stays untouched;
+# if the key is already there, the block is not added twice.
 
 [recipe]
 name = "site-rescue-audit"
 version = "2026-11-02"
-description = "site-rescue + site-audit gemeinsam ausrollen"
+description = "Deploy site-rescue + site-audit together"
 requires = ["bash", "install", "sha256sum"]
 
 [vars.SCRIPTS_DIR]
 default = "./scripts"
-description = "Verzeichnis der Nutzlast-Skripte (pro Profil aenderbar)"
+description = "Directory of the payload scripts (changeable per profile)"
 
 [vars.WHITELIST_IP]
 default = ""
-description = "IP des Ueberwachungs-Macs (leer = kein from= und keine fail2ban-Regel)"
+description = "IP of the monitoring Mac (empty = no from= and no fail2ban rule)"
 
-# --- Vorpruefung -----------------------------------------------------------
+# --- Preflight -------------------------------------------------------------
 
-# Nur ein Hinweis: fehlt die Gruppe, scheitert useradd gleich danach mit einer
-# weniger klaren Meldung. Auf den neuen Servern ist das der einzige Stolperstein.
+# Advisory only: if the group is missing, useradd fails right after this with a
+# less clear message. On new servers this is the only stumbling block.
 [[preflight]]
-name = "Gruppe fuer den rescue-Zugang vorhanden"
+name = "Group for rescue access exists"
 level = "warn"
-hint = "Gruppe fehlt: groupadd <gruppe> oder SYSTEM_USER_GROUPS in .env anpassen"
+hint = "Group missing: groupadd <group> or adjust SYSTEM_USER_GROUPS in .env"
 run = "getent group {{SYSTEM_USER_GROUPS|q}} >/dev/null"
 
-# --- Dateien ---------------------------------------------------------------
+# --- Files -----------------------------------------------------------------
 #
-# on_conflict = "overwrite": diese drei Pfade gehoeren dem Rezept. Ein Probelauf
-# zeigt Abweichungen vorher, vor jedem Schreibvorgang wird gesichert, und der
-# Wechsel vom alten Einzel-Push laeuft dadurch ohne Rueckfrage durch.
+# on_conflict = "overwrite": these three paths belong to the recipe. A dry run
+# shows differences up front, every write is backed up, and the switch from the
+# old single push therefore runs without a prompt.
 
 [[files]]
 src = "{{SCRIPTS_DIR}}/site-audit"
@@ -59,7 +60,7 @@ owner = "root"
 group = "root"
 validate = "bash -n {{FILE}}"
 on_conflict = "overwrite"
-description = "site-audit (nur lesend, wird von site-rescue aufgerufen)"
+description = "site-audit (read-only, called by site-rescue)"
 
 [[files]]
 src = "{{SCRIPTS_DIR}}/site-rescue"
@@ -79,9 +80,9 @@ owner = "root"
 group = "root"
 validate = "visudo -cf {{FILE}}"
 on_conflict = "overwrite"
-description = "Sudoers-Regel fuer den rescue-Zugang (env_keep fuer SSH_ORIGINAL_COMMAND)"
+description = "Sudoers rule for rescue access (env_keep for SSH_ORIGINAL_COMMAND)"
 
-# --- Benutzer und Schluessel ----------------------------------------------
+# --- Users and keys --------------------------------------------------------
 
 [[users]]
 name = "{{SYSTEM_USER}}"
@@ -90,11 +91,11 @@ shell = "/bin/bash"
 groups = ["{{SYSTEM_USER_GROUPS}}"]
 create_home = true
 lock_password = true
-description = "SSH-Zugang nur fuer site-rescue"
+description = "SSH access for site-rescue only"
 
-# Fester Schluessel des Ueberwachungs-Macs. Wird nur eingetragen, wenn
-# RESCUE_PUBKEY im Profil gesetzt ist. Steht der Schluessel auf einem Host
-# bereits in authorized_keys (handgepflegt), bleibt das so - kein Doppel-Eintrag.
+# Permanent key of the monitoring Mac. Only added when RESCUE_PUBKEY is set in
+# the profile. If the key already exists in authorized_keys on a host
+# (hand-maintained), that stays as is - no duplicate entry.
 [[authorized_keys]]
 user = "{{SYSTEM_USER}}"
 keys = '''{{RESCUE_PUBKEY}}'''
@@ -103,23 +104,23 @@ restrict = true
 from = "{{WHITELIST_IP}}"
 id = "rescue-key"
 if_var = "RESCUE_PUBKEY"
-description = "fester Schluessel des Ueberwachungs-Macs"
+description = "permanent key of the monitoring Mac"
 
-# Nur der temporaere Test-Schluessel (kein keys = kein Dauer-Eintrag).
-# Der Aufbau ist derselbe wie beim echten Zugang, die Tests laufen also
-# wirklich durch Forced Command -> sudo -> site-rescue.
+# Only the temporary test key (no keys = no permanent entry).
+# The setup is the same as for real access, so the tests really run through
+# forced command -> sudo -> site-rescue.
 [[authorized_keys]]
 user = "{{SYSTEM_USER}}"
 command = "sudo /usr/local/bin/site-rescue"
 restrict = true
 id = "test-key"
 ephemeral_test_key = true
-description = "temporaerer Test-Schluessel (nur waehrend der Tests)"
+description = "temporary test key (only during the tests)"
 
-# --- Betrieb ---------------------------------------------------------------
+# --- Operations ------------------------------------------------------------
 
 [[steps]]
-name = "Fail2ban-Whitelist fuer die Ueberwachungs-IP"
+name = "Fail2ban whitelist for the monitoring IP"
 if_var = "WHITELIST_IP"
 sudo = true
 unless_cmd = '''test -f /etc/fail2ban/jail.d/99-deploy-whitelist.local && grep -qF -- {{WHITELIST_IP|q}} /etc/fail2ban/jail.d/99-deploy-whitelist.local'''
@@ -136,25 +137,25 @@ fi
 # --- Tests -----------------------------------------------------------------
 
 [[tests]]
-name = "beide Skripte installiert, ausfuehrbar und syntaktisch gueltig"
+name = "both scripts installed, executable and syntactically valid"
 run = "test -x /usr/local/bin/site-audit && test -x /usr/local/bin/site-rescue && bash -n /usr/local/bin/site-audit && bash -n /usr/local/bin/site-rescue && echo install-ok"
 expect = ["^install-ok$"]
 
-# Prueft den echten Weg: Forced Command -> sudo -> site-rescue.
-# "diag" ohne Domain endet absichtlich mit rc=1 und "fehler=domain ...".
+# Exercises the real path: forced command -> sudo -> site-rescue.
+# "diag" without a domain intentionally ends with rc=1 and "error=domain ...".
 [[tests]]
-name = "rescue-Zugang: Forced Command, sudo und site-rescue antworten"
+name = "rescue access: forced command, sudo and site-rescue respond"
 kind = "ssh"
 user = "{{SYSTEM_USER}}"
 key = "ephemeral"
 run = "diag"
 expect_rc = 1
-expect = ["^fehler=domain"]
+expect = ["^error=domain"]
 
-# Laeuft nur mit -s TEST_AUDIT=1: die echte Wochenpruefung (langsam, braucht
-# ausgehendes HTTPS). Nicht kritisch, damit ein Netzproblem keinen Rollback ausloest.
+# Only runs with -s TEST_AUDIT=1: the real weekly check (slow, needs outgoing
+# HTTPS). Not critical, so a network problem does not trigger a rollback.
 [[tests]]
-name = "Wochenpruefung: site-rescue reicht audit an site-audit weiter"
+name = "weekly check: site-rescue forwards audit to site-audit"
 kind = "ssh"
 user = "{{SYSTEM_USER}}"
 key = "ephemeral"

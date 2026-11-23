@@ -1,19 +1,19 @@
 #!/bin/bash
-# Erste Hilfe für eine hängende Website. Läuft auf den Webservern als root,
-# aufgerufen nur vom Monitoring-Host über einen SSH-Forced-Command des Benutzers "rescue":
+# First aid for a hanging website. Runs on the web servers as root,
+# called only from the monitoring host through an SSH forced command of the "rescue" user:
 #   command="sudo /usr/local/bin/site-rescue",no-pty,... in ~rescue/.ssh/authorized_keys
-# Den Befehl liest das Skript aus SSH_ORIGINAL_COMMAND und prüft jedes Wort. Es kann nur:
-#   diag <domain>                       Zahlen zur Website: belegte PHP-Prozesse, häufigstes Netz/User-Agent (ohne 403), Timeouts
-#   block <domain> ua <wort>            User-Agent sperren (403) in der .htaccess der Website
-#   block <domain> net <a.b>            /16-Netz sperren (403)
-#   unblock <domain>                    alle von site-rescue gesetzten Sperren der Website entfernen
-#   audit                               ganzen Server nur lesend prüfen (Hack-Spuren, Versionen), siehe site-audit
-#   restart-pool <domain>               nur die PHP-Prozesse dieser einen Website beenden (der FPM-Master startet neue);
-#                                       bei mod_php mit mpm_itk die Apache-Prozesse, die gerade als Benutzer der Website laufen
-# Jede Änderung: Sicherung der alten .htaccess in /var/backups/site-rescue, Zeile in /var/log/site-rescue.log.
-# Einstellungen (optional): /etc/site-rescue.conf
-#   OWN_NETS="127.0.0 10. 172.16. 192.168."   nie sperrbar
-#   POOL_RESTART_MIN=10                      Minuten zwischen zwei Pool-Neustarts derselben Website
+# The script reads the command from SSH_ORIGINAL_COMMAND and checks every word. It can only:
+#   diag <domain>                       numbers about the site: busy PHP processes, most common network/user agent (without 403), timeouts
+#   block <domain> ua <word>            block a user agent (403) in the site's .htaccess
+#   block <domain> net <a.b>            block a /16 network (403)
+#   unblock <domain>                    remove all blocks set by site-rescue for the site
+#   audit                               check the whole server read-only (traces of compromise, versions), see site-audit
+#   restart-pool <domain>               terminate only the PHP processes of this one site (the FPM master starts new ones);
+#                                       with mod_php and mpm_itk, the Apache processes currently running as the site's user
+# Every change: backup of the old .htaccess in /var/backups/site-rescue, a line in /var/log/site-rescue.log.
+# Settings (optional): /etc/site-rescue.conf
+#   OWN_NETS="127.0.0 10. 172.16. 192.168."   never blockable
+#   POOL_RESTART_MIN=10                      minutes between two pool restarts of the same site
 set -u
 export LC_ALL=C
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -23,30 +23,30 @@ POOL_RESTART_MIN=10
 LOG=/var/log/site-rescue.log
 BK=/var/backups/site-rescue
 STATE=/var/lib/site-rescue
-BEGIN="# BEGIN site-rescue (automatisch)"
+BEGIN="# BEGIN site-rescue (automatic)"
 END="# END site-rescue"
-SENTINEL='255\.255\.255\.255'   # Schlusszeile des Blocks (nie zutreffend), beendet die [OR]-Kette
+SENTINEL='255\.255\.255\.255'   # final line of the block (never matches), terminates the [OR] chain
 
-die() { echo "fehler=$*"; exit 1; }
+die() { echo "error=$*"; exit 1; }
 log() { echo "$(date '+%F %T') ${SSH_CLIENT%% *} $*" >> "$LOG"; }
 
 read -r -a A <<< "${SSH_ORIGINAL_COMMAND:-$*}"
 CMD="${A[0]:-}"; DOMAIN="${A[1]:-}"
-# audit: wöchentliche Sicherheits-/Update-Prüfung des ganzen Servers, nur lesend (server/site-audit)
+# audit: weekly security/update check of the whole server, read-only (server/site-audit)
 if [ "$CMD" = audit ] && [ "${#A[@]}" -eq 1 ]; then
-  [ -x /usr/local/bin/site-audit ] || die "site-audit nicht installiert"
+  [ -x /usr/local/bin/site-audit ] || die "site-audit not installed"
   log "audit"
   exec /usr/local/bin/site-audit
 fi
-[[ "$DOMAIN" =~ ^[a-z0-9][a-z0-9.-]{1,80}\.[a-z]{2,12}$ ]] || die "domain ungültig"
+[[ "$DOMAIN" =~ ^[a-z0-9][a-z0-9.-]{1,80}\.[a-z]{2,12}$ ]] || die "invalid domain"
 DOMAIN="${DOMAIN#www.}"
 
 POOL=$(ls /etc/php/*/fpm/pool.d/"$DOMAIN".conf 2>/dev/null | head -1)
-# Vhost-Datei der Domain: Domain als ganzes Wort in ServerName/ServerAlias oder in einer mod_macro-"Use"-Zeile
-# -R: die Einträge in sites-enabled sind meist Symlinks, die grep -r beim Durchsuchen nicht verfolgt
+# Vhost file of the domain: domain as a whole word in ServerName/ServerAlias or in a mod_macro "Use" line
+# -R: the entries in sites-enabled are mostly symlinks, which grep -r does not follow while searching
 VHOST=$(grep -RilE "^\s*(Server(Name|Alias)|Use)\s.*(^|[[:space:].])${DOMAIN//./\\.}([[:space:]]|$)" /etc/apache2/sites-enabled 2>/dev/null | head -1)
 realuser() { [ -n "$1" ] && [ "$(id -u "$1" 2>/dev/null || echo 0)" -ge 1000 ] && echo "$1"; }
-# Benutzer der Website (nie root/www-data): AssignUserID (mpm_itk), "user =" im FPM-Pool, sonst ein Argument der Use-Zeile
+# Site user (never root/www-data): AssignUserID (mpm_itk), "user =" in the FPM pool, otherwise an argument of the Use line
 siteuser() {
   local u a
   [ -n "$VHOST" ] && u=$(awk 'tolower($1) == "assignuserid" { print $2; exit }' "$VHOST") && realuser "$u" && return
@@ -55,9 +55,9 @@ siteuser() {
   for a in $(awk 'tolower($1) == "use" { $1 = ""; $2 = ""; print }' "$VHOST"); do realuser "${a//\"/}" && return; done
   return 1
 }
-# DocumentRoot: aus dem Vhost, sonst das letzte Verzeichnis-Argument der Use-Zeile (Makros der mod_php-Server:
-# "Use VhostITK <benutzer> <domain> /home/<x> /home/<x>/public_html/" – das erste ist das Home), sonst
-# /home/<benutzer>/public_html
+# DocumentRoot: from the vhost, otherwise the last directory argument of the Use line (mod_php server macros:
+# "Use VhostITK <user> <domain> /home/<x> /home/<x>/public_html/" - the first one is the home), otherwise
+# /home/<user>/public_html
 docroot() {
   local d a u last=""
   [ -n "$VHOST" ] && d=$(awk 'tolower($1) == "documentroot" { gsub(/"/, "", $2); print $2; exit }' "$VHOST") && [ -d "$d" ] && { echo "$d"; return; }
@@ -69,8 +69,8 @@ docroot() {
   return 1
 }
 DOCROOT=$(docroot) || true
-# FPM-Pool heißt oft nach der Hauptdomain (Alias shop.x.at → Pool sw6.x.at): dann über den Benutzer der Website
-# suchen (Use-Makro ohne Benutzer → Besitzer des DocumentRoot)
+# FPM pools are often named after the main domain (alias shop.x.at -> pool sw6.x.at): then search
+# through the site user (Use macro without user -> owner of the DocumentRoot)
 if [ -z "$POOL" ] && ls /etc/php/*/fpm/pool.d/*.conf > /dev/null 2>&1; then
   PU=$(siteuser) || { [ -n "$DOCROOT" ] && PU=$(realuser "$(stat -c %U "$DOCROOT")"); } || PU=""
   [ -n "$PU" ] && POOL=$(grep -lE "^\s*user\s*=\s*$PU\s*$" /etc/php/*/fpm/pool.d/*.conf 2>/dev/null | head -1)
@@ -78,7 +78,7 @@ fi
 POOLNAME=""
 [ -n "$POOL" ] && POOLNAME=$(sed -n 's/^\[\(.*\)\]\s*$/\1/p' "$POOL" | head -1)
 [ -n "$POOLNAME" ] || POOLNAME="$DOMAIN"
-# Logs liegen neben public_html (/home/<x>/logs); bei Unterordnern als DocumentRoot (public_html/public) nach oben suchen
+# Logs live next to public_html (/home/<x>/logs); for subdirectories as DocumentRoot (public_html/public) search upwards
 LOGDIR=""
 if [ -n "$DOCROOT" ]; then
   d=$(readlink -f "$DOCROOT")
@@ -88,55 +88,55 @@ fi
 case "$CMD" in
 diag)
   echo "domain=$DOMAIN"
-  echo "docroot=${DOCROOT:-unbekannt}"
+  echo "docroot=${DOCROOT:-unknown}"
   if [ -n "$POOL" ]; then
     max=$(awk -F= '/^\s*pm.max_children/ { gsub(/ /, "", $2); print $2 }' "$POOL")
     echo "pool=$POOLNAME"
-    echo "pool_prozesse=$(pgrep -fc "php-fpm: pool $POOLNAME\$") von ${max:-?}"
+    echo "pool_processes=$(pgrep -fc "php-fpm: pool $POOLNAME\$") of ${max:-?}"
   elif U=$(siteuser); then
     max=$(awk 'tolower($1) == "maxrequestworkers" { print $2; exit }' /etc/apache2/mods-enabled/mpm_prefork.conf 2>/dev/null)
-    echo "apache_prozesse_der_website=$(pgrep -u "$U" -xc apache2) (alle: $(pgrep -xc apache2) von ${max:-?})"
+    echo "apache_processes_for_site=$(pgrep -u "$U" -xc apache2) (all: $(pgrep -xc apache2) of ${max:-?})"
   else
-    echo "pool=keiner gefunden"
+    echo "pool=none found"
   fi
   echo "last=$(cut -d' ' -f1-3 /proc/loadavg)"
   if [ -r "$LOGDIR/access.log" ]; then
     T=$(mktemp) || die "mktemp"
     tail -n 5000 "$LOGDIR/access.log" > "$T"
-    echo "anfragen_letzte=$(wc -l < "$T")"
-    # Netz und User-Agent nur über Zugriffe, die nicht schon mit 403 abgewiesen werden (bereits gesperrte Bots
-    # sollen die eigentliche Ursache nicht verdecken)
-    awk '$9 != 403 { split($1, o, "."); n[o[1] "." o[2]]++ } END { for (k in n) print n[k], k }' "$T" | sort -rn | head -3 | sed 's/^/netz=/'
+    echo "requests_last=$(wc -l < "$T")"
+    # Network and user agent only from requests that are not already rejected with 403 (already blocked bots
+    # should not hide the actual cause)
+    awk '$9 != 403 { split($1, o, "."); n[o[1] "." o[2]]++ } END { for (k in n) print n[k], k }' "$T" | sort -rn | head -3 | sed 's/^/net=/'
     awk -F'"' '{ split($3, f, " ") } f[1] != 403 { n[$6]++ } END { for (k in n) print n[k], substr(k, 1, 120) }' "$T" | sort -rn | head -3 | sed 's/^/agent=/'
     awk '{ print $9 }' "$T" | sort | uniq -c | sort -rn | head -5 | sed 's/^/status=/'
     rm -f "$T"
   fi
   if [ -r "$LOGDIR/error.log" ]; then
-    # Timeouts der letzten 15 Minuten (Apache-Fehlerlog: "[Wed Oct 28 09:59:52.846114 2026]")
+    # Timeouts of the last 15 minutes (Apache error log: "[Wed Oct 28 09:59:52.846114 2026]")
     M=$(for i in $(seq 0 14); do date -d "-$i min" '+%b %d %H:%M'; done | paste -sd'|')
     echo "timeouts_15min=$(tail -n 20000 "$LOGDIR/error.log" | grep -E "($M):" | grep -c 'AH01075\|timeout specified has expired')"
   fi
-  sed -n "/^$BEGIN/,/^$END/p" "$DOCROOT/.htaccess" 2>/dev/null | grep '^RewriteCond' | grep -vcF "$SENTINEL" | sed 's/^/sperren_aktiv=/'
+  sed -n "/^$BEGIN/,/^$END/p" "$DOCROOT/.htaccess" 2>/dev/null | grep '^RewriteCond' | grep -vcF "$SENTINEL" | sed 's/^/active_blocks=/'
   ;;
 
 block|unblock)
-  [ -n "$DOCROOT" ] && [ -d "$DOCROOT" ] || die "webspace nicht gefunden"
+  [ -n "$DOCROOT" ] && [ -d "$DOCROOT" ] || die "webspace not found"
   H="$DOCROOT/.htaccess"
   RULES=""
   if [ "$CMD" = block ]; then
     KIND="${A[2]:-}"; VAL="${A[3]:-}"
     case "$KIND" in
-      ua)  [[ "$VAL" =~ ^[A-Za-z][A-Za-z0-9._/-]{3,59}$ ]] || die "user-agent-wort ungültig"
+      ua)  [[ "$VAL" =~ ^[A-Za-z][A-Za-z0-9._/-]{3,59}$ ]] || die "invalid user-agent word"
            [[ "$VAL" =~ ^(Mozilla|Chrome|Safari|Firefox|AppleWebKit|Gecko|KHTML|Mobile|Windows|Macintosh|Linux|Android|iPhone)(/.*)?$ ]] \
-             && die "zu allgemein, würde echte Besucher sperren"
-           [[ "$VAL" =~ ^(Googlebot|bingbot|WordPress)$ ]] && die "nicht sperrbar"
+             && die "too generic, would block real visitors"
+           [[ "$VAL" =~ ^(Googlebot|bingbot|WordPress)$ ]] && die "not blockable"
            RULES="RewriteCond %{HTTP_USER_AGENT} \"${VAL//./\\.}\" [NC,OR]" ;;
-      net) [[ "$VAL" =~ ^([0-9]{1,3})\.([0-9]{1,3})$ ]] || die "netz ungültig (a.b)"
-           for o in $OWN_NETS; do [ "$o" = "$VAL" ] && die "eigenes netz"; done
-           RULES="RewriteCond %{REMOTE_ADDR} ^${VAL//./\\.}\\. [OR]" ;;
+      net) [[ "$VAL" =~ ^([0-9]{1,3})\.([0-9]{1,3})$ ]] || die "invalid network (a.b)"
+           for o in $OWN_NETS; do [ "$o" = "$VAL" ] && die "own network"; done
+           RULES="RewriteCond %{REMOTE_ADDR} ^${VAL//./\\.}\. [OR]" ;;
       *)   die "block ua|net" ;;
     esac
-    grep -qF "$RULES" "$H" 2>/dev/null && { echo "ok=schon gesperrt"; exit 0; }
+    grep -qF "$RULES" "$H" 2>/dev/null && { echo "ok=already blocked"; exit 0; }
   fi
   mkdir -p "$BK" "$STATE"
   [ -f "$H" ] && cp -p "$H" "$BK/$DOMAIN.htaccess.$(date +%Y%m%d-%H%M%S)"
@@ -162,15 +162,15 @@ block|unblock)
   mv "$TMP" "$H"
   log "$CMD $DOMAIN ${A[2]:-} ${A[3]:-}"
   echo "ok=$CMD $DOMAIN ${A[2]:-} ${A[3]:-}"
-  echo "sperren_aktiv=$(printf '%s\n' "$NEW" | grep -c '^RewriteCond')"
+  echo "active_blocks=$(printf '%s\n' "$NEW" | grep -c '^RewriteCond')"
   ;;
 
 restart-pool)
   U=""
-  [ -n "$POOL" ] || U=$(siteuser) || die "weder php-fpm-pool noch mpm_itk-benutzer für $DOMAIN"
+  [ -n "$POOL" ] || U=$(siteuser) || die "neither php-fpm pool nor mpm_itk user for $DOMAIN"
   mkdir -p "$STATE"; S="$STATE/restart.$DOMAIN"
   if [ -f "$S" ] && [ $(( $(date +%s) - $(stat -c %Y "$S") )) -lt $(( POOL_RESTART_MIN * 60 )) ]; then
-    die "letzter neustart vor weniger als $POOL_RESTART_MIN min"
+    die "last restart less than $POOL_RESTART_MIN min ago"
   fi
   touch "$S"
   if [ -n "$POOL" ]; then
@@ -178,14 +178,14 @@ restart-pool)
     pkill -TERM -f "php-fpm: pool $POOLNAME\$"; sleep 3
     pkill -KILL -f "php-fpm: pool $POOLNAME\$" 2>/dev/null
   else
-    # mpm_itk: nur Kinder, die gerade als Benutzer der Website laufen; der Apache-Hauptprozess (root) startet neue
+    # mpm_itk: only children currently running as the site's user; the Apache main process (root) starts new ones
     n=$(pgrep -u "$U" -xc apache2)
     pkill -TERM -u "$U" -x apache2; sleep 3
     pkill -KILL -u "$U" -x apache2 2>/dev/null
   fi
-  log "restart-pool $DOMAIN ($n prozesse beendet${U:+, mpm_itk $U})"
-  echo "ok=restart-pool $DOMAIN, $n prozesse beendet"
+  log "restart-pool $DOMAIN ($n processes terminated${U:+, mpm_itk $U})"
+  echo "ok=restart-pool $DOMAIN, $n processes terminated"
   ;;
 
-*) die "erlaubt: diag | block | unblock | restart-pool" ;;
+*) die "allowed: diag | block | unblock | restart-pool" ;;
 esac

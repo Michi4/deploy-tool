@@ -1,9 +1,9 @@
 #!/bin/bash
-# Wöchentliche Sicherheits- und Update-Prüfung eines Webservers. Läuft als root, nur lesend.
-# Aufruf vom Monitoring-Host über den Zugang "rescue": ssh -i rescue_key rescue@<server> audit
-# (site-rescue reicht "audit" hierher weiter). Ändert nichts, legt nur in einem Temp-Ordner die
-# WordPress-Prüfsummen ab, der am Ende gelöscht wird.
-# Ausgabe je Zeile: H|schlüssel|wert  C|pfad|cms|version  P|pfad|plugin|version  T|pfad|theme|version  X|pfad|art|detail
+# Weekly security and update check of a web server. Runs as root, read-only.
+# Called from the monitoring host through the "rescue" access: ssh -i rescue_key rescue@<server> audit
+# (site-rescue forwards "audit" here). Changes nothing, only stores the WordPress
+# checksums in a temp directory that is deleted at the end.
+# Output per line: H|key|value  C|path|cms|version  P|path|plugin|version  T|path|theme|version  X|path|type|detail
 export LC_ALL=C
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TMPD=$(mktemp -d); trap 'rm -rf "$TMPD"' EXIT
@@ -43,11 +43,11 @@ ps -eo user:20,pcpu,etime,args --sort=-pcpu 2>/dev/null | awk 'NR>1 && NR<=9' | 
 find /tmp /var/tmp /dev/shm -maxdepth 3 -type f \( -perm -u+x -o -name '*.php' -o -name '*.pl' -o -name '*.sh' -o -name '*.py' \) 2>/dev/null | head -30 |
   while read -r f; do printf 'X|server|tmpexec|%s %s\n' "$(stat -c '%U %y' "$f" 2>/dev/null | cut -c1-30)" "$f"; done
 
-# Domains je DocumentRoot aus den Vhosts (root kann sites-enabled lesen): V|docroot|domain domain …
+# Domains per DocumentRoot from the vhosts (root can read sites-enabled): V|docroot|domain domain ...
 for f in /etc/apache2/sites-enabled/*; do
   awk 'tolower($1) ~ /^server(name|alias)$/ { for (i = 2; i <= NF; i++) d = d " " $i }
        tolower($1) == "documentroot" { gsub(/"/, "", $2); r = $2 }
-       tolower($1) == "use" { dd = ""; rr = ""; for (i = 3; i <= NF; i++) { a = $i; gsub(/"/, "", a)
+       tolower($1) == "use" { dd = ""; rr = ""; for (i = 3; i <= NF; i++) { a = $i; gsub(/\"/, "", a)
            if (a ~ /^\//) rr = a; else if (a ~ /\./) dd = dd " " a }
          if (rr != "" && dd != "") print "V|" rr "|" dd }
        tolower($1) == "</virtualhost>" { if (r != "" && d != "") print "V|" r "|" d; d = ""; r = "" }' "$f" 2>/dev/null
@@ -56,7 +56,7 @@ done | sed 's#/|#|#' | sort -u
 # Find CMS installations below /home (skip archived homes)
 SIG='eval[[:space:]]*\([[:space:]]*(base64_decode|gzinflate|gzuncompress|str_rot13|strrev|rawurldecode|hex2bin)[[:space:]]*\(|eval[[:space:]]*\([[:space:]]*\$_(POST|GET|REQUEST|COOKIE|SERVER)|assert[[:space:]]*\([[:space:]]*\$_(POST|GET|REQUEST|COOKIE)|\$_(POST|GET|REQUEST|COOKIE)\[[^]]{1,40}\][[:space:]]*\(|FilesMan|WSOsetcookie|b374k|r57shell|c99shell|IndoXploit|Mister Spy|ALFA_DATA|AlfaTeam|anonymousfox|TinyFileManager|@include[[:space:]]*["'"'"'](\\x[0-9a-fA-F]{2}){4}|\\x65\\x76\\x61\\x6c|\$GLOBALS\[["'"'"'][a-zA-Z0-9_]+["'"'"']\]\[[0-9]+\]\(|preg_replace[[:space:]]*\([[:space:]]*["'"'"'].{1,40}/e["'"'"']'
 
-# Inhaltliche Prüfung (perl, nur lesen): Verschleierung, Webshell-Muster, PHP in Bildern/Medienordnern, eingeschleuste erste Zeile
+# Content check (perl, read-only): obfuscation, webshell patterns, PHP in images/media dirs, injected first line
 cat > "$TMPD/scan.pl" <<'PERL'
 use strict; use warnings; use File::Find;
 my ($root, $okfile) = @ARGV; my %hit; my %ok;
@@ -65,12 +65,12 @@ my $conf = ''; for my $cf (glob("$root/typo3conf/*.php"), glob("$root/wp-config.
 my $danger = qr/\b(eval|assert|base64_decode|gzinflate|gzuncompress|str_rot13|parse_str|create_function|call_user_func(?:_array)?|preg_replace|file_put_contents|move_uploaded_file|shell_exec|passthru|system|proc_open|popen|fsockopen|curl_exec|hex2bin|strrev|rawurldecode)\s*(?:\/\*.*?\*\/\s*)?\(/is;
 my $sig = qr/eval\s*\(\s*(base64_decode|gzinflate|gzuncompress|str_rot13|rawurldecode|hex2bin)\s*\(|eval\s*\(\s*\$_(POST|GET|REQUEST|COOKIE|SERVER)|assert\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)|\$_(POST|GET|REQUEST|COOKIE)\[[^\]]{1,40}\]\s*\(\s*\$_|FilesMan|WSOsetcookie|b374k|r57shell|c99shell|IndoXploit|Mister Spy|ALFA_DATA|AlfaTeam|anonymousfox|\\x65\\x76\\x61\\x6c|\$GLOBALS\[["'][a-zA-Z0-9_]+["']\]\[[0-9]+\]\(/;
 my $legit = qr{/(vendor|vendor_prefixed|typo3_src|node_modules|wflogs|realurl|adodb|rokcommon|Doctrine|tcpdf|Zend|simplepie|getid3|phpseclib|phpmailer|Mail_Mime|all-in-one-wp-security-and-firewall/classes/firewall|wordfence/|sucuri-scanner|better-wp-security|ninjafirewall|Customweb)/}i;
-sub obf {  # verschleiert: gefährliche Funktion in gemischter Schreibweise oder viele /*…*/.-Ketten
+sub obf {  # obfuscated: dangerous function in mixed case or many /*...*/ comment chains
   my ($c) = @_;
-  while ($c =~ /$danger/g) { my $f = $1; return "Funktion $f in gemischter Schreibweise" if substr($f, 1) ne lc substr($f, 1) && $f ne uc $f; }
-  my $n = () = $c =~ /\*\/\s*\.\s*(?:\/\/|\/\*|['"])/g; return "verschleierte Zeichenketten ($n Kommentar-Ketten)" if $n >= 8;
-  return "Schadcode-Muster: $1" if $c =~ /($sig)/;
-  return "kodierter Block wird ausgeführt" if length($c) < 150_000 && $c !~ /BEGIN CERTIFICATE|data:image|data:font|data:application/
+  while ($c =~ /$danger/g) { my $f = $1; return "function $f in mixed case" if substr($f, 1) ne lc substr($f, 1) && $f ne uc $f; }
+  my $n = () = $c =~ /\*\/\s*\.\s*(?:\/\/|\/\*|['"])/g; return "obfuscated strings ($n comment chains)" if $n >= 8;
+  return "malware pattern: $1" if $c =~ /($sig)/;
+  return "encoded block is executed" if length($c) < 150_000 && $c !~ /BEGIN CERTIFICATE|data:image|data:font|data:application/
     && $c =~ /[A-Za-z0-9+\/=]{2000,}/ && $c =~ /\b(eval|assert|create_function)\s*\(|\$\w+\s*\(\s*\$\w+\s*\(/;
   return '';
 }
@@ -80,35 +80,36 @@ find({ no_chdir => 1, wanted => sub {
   return unless -f $f;
   my $r = substr($f, length($root) + 1);
   if ($r =~ /\.(php\d?|phtml|phar|inc|suspected)$/i) {
-    # Ort allein reicht: PHP in Upload-/Medien-/Sprachordnern
+    # Location alone is enough: PHP in upload/media/lang directories
     if ($r =~ m{^(fileadmin|uploads|typo3conf/l10n|typo3temp)/}i && $r !~ m{^typo3temp/(var|Cache|autoload|ExtensionManager|Core|compressor)/}i) {
       my ($b) = $r =~ m{([^/]+)$};
-      if ($r =~ m{^fileadmin/}i) {   # fileadmin: nur mit gefährlichen Funktionen und nicht aus der Konfiguration eingebunden
+      if ($r =~ m{^fileadmin/}i) {   # fileadmin: only with dangerous functions and not included from the configuration
         if (index($conf, $b) < 0 && -s $f < 3_000_000 && open(my $fh, '<', $f)) { local $/; my $c = <$fh> // ''; close $fh;
           my $o = obf($c); $hit{$r} = "fileadmin: $o" if $o; }
-      } else { $hit{$r} = 'PHP in Medien-/Temp-Ordner'; } }
+      } else { $hit{$r} = 'PHP in media/temp directory'; } }
     elsif ($r =~ m{^(wp-content|web/app)/uploads/}i && $r !~ m{/uploads/(cache|mailpoet|smush|smile_fonts|redux|borlabs-cookie|revslider|visualcomposer-assets|matomo|mailchimp-for-wp|et-cache|wpml|wc-logs|wpforms|gravity_forms|elementor|wp-staging|woocommerce_uploads|wpo|ai1wm-backups|backwpup|updraft|avia_fonts|woocommerce-pdf-invoices|wpo_wcpdf|dynamic_avia)/}i
            && -s $f < 3_000_000 && open(my $uh, '<', $f)) { local $/; my $c = <$uh> // ''; close $uh;
-      $hit{$r} = 'PHP mit gefährlichen Funktionen im Upload-Ordner' if $c =~ $danger || $c =~ /base64|\\x[0-9a-f]{2}/i; }
-    $hit{$r} ||= 'Spam-Seite (Name)' if $r =~ m{(^|/)[^/]*(viagra|cialis|kamagra|levitra|tadalafil|sildenafil|apcalis|potenzmittel|priligy|dapoxetin|casino-bonus)[^/]*\.php$}i;
+      $hit{$r} = 'PHP with dangerous functions in upload directory' if $c =~ $danger || $c =~ /base64|\\x[0-9a-f]{2}/i; }
+    $hit{$r} ||= 'spam page (name)' if $r =~ m{(^|/)[^/]*(viagra|cialis|kamagra|levitra|tadalafil|sildenafil|apcalis|potenzmittel|priligy|dapoxetin|casino-bonus)[^/]*\.php$}i;
     return if -s $f > 3_000_000;
     open(my $h, '<', $f) or return; local $/; my $c = <$h> // ''; close $h;
     return if $r =~ m{(^|/)application/logs/log-[\d-]+\.php$};
     return if $f =~ $legit || $ok{$r} || $r =~ /\.l10n\.php$/ || $r =~ m{/languages/};
-    # eingeschleuste erste Zeile vor einer sonst echten Datei: nur diese Zeile entfernen
-    my $ev = qr/(?:\@?(?:eval|assert)\s*\(\s*\$_(?:POST|GET|REQUEST|COOKIE)\[[^\]]{1,60}\]\s*\)\s*;\s*)+/;
+    # Injected first line before an otherwise genuine file: remove only that line
+    my $ev = qr/(?:\@?(?:eval|assert)\s*\(\s*\$_(?:POST|GET|REQUEST|COOKIE)\[[^\]]{1,60}\]\s*\)\s*;\s*)+
+/;
     if ($c =~ /\A<\?php\s+$ev(?:\?>\s*)?\n/ && obf($c =~ s/\A<\?php\s+$ev(?:\?>\s*)?\n/<?php\n/r) eq '') { $hit{$r} = 'INJECT'; return; }
     my $o = obf($c); $hit{$r} ||= $o if $o;
   } elsif ($r =~ /\.(ico|png|jpe?g|gif|orf|tmp)$/i && -s $f < 400_000) {
     open(my $h, '<', $f) or return; local $/; my $c = <$h> // ''; close $h;
-    $hit{$r} = 'PHP-Code in Nicht-PHP-Datei' if $c =~ /<\?php/ && ($c =~ $danger) && $r !~ m{^typo3temp/var/};
+    $hit{$r} = 'PHP code in non-PHP file' if $c =~ /<\?php/ && ($c =~ $danger) && $r !~ m{^typo3temp/var/};
   }
 }}, $root);
-# Ordner, deren PHP-Dateien alle auffällig sind (mind. 20), als Ganzes melden
+# Directories whose PHP files are all suspicious (at least 20): report them as a whole
 my (%n, %tot);
 for (keys %hit) { my ($d) = m{^(.*)/[^/]+$}; $n{$d}++ if defined $d; }
 for my $d (keys %n) { next if $n{$d} < 20; opendir(my $dh, "$root/$d") or next; my @a = grep { -f "$root/$d/$_" } readdir $dh; closedir $dh;
-  if (@a <= $n{$d} + 2 || $n{$d} >= 0.9 * @a) { delete $hit{$_} for grep { m{^\Q$d\E/[^/]+$} } keys %hit; $hit{$d} = "Ordner mit $n{$d} Spam-/Schad-Dateien"; } }
+  if (@a <= $n{$d} + 2 || $n{$d} >= 0.9 * @a) { delete $hit{$_} for grep { m{^\Q$d\E/[^/]+$} } keys %hit; $hit{$d} = "directory with $n{$d} spam/malicious files"; } }
 print "$hit{$_}\t$_\n" for sort keys %hit;
 PERL
 
@@ -119,9 +120,9 @@ scan_root() { # docroot
        -type f \( -name '*.php' -o -name '*.phtml' -o -name '*.php5' -o -name '*.php7' -o -name '*.inc' -o -name '*.ico' \) -size -3M -print0 2>/dev/null |
     xargs -0 -r grep -lIE -- "$SIG" 2>/dev/null | head -15 | while read -r f; do
       printf 'X|%s|sig|%s %s :: %s\n' "$r" "$(stat -c '%y' "$f" | cut -c1-16)" "${f#$r/}" "$(grep -oE -m1 -- "$SIG" "$f" 2>/dev/null | head -1 | cut -c1-60)"; done
-  # perl-Prüfung (findet auch verschleierte Shells, die das grep-Muster nicht kennt)
+  # perl check (also finds obfuscated shells the grep pattern does not know)
   perl "$TMPD/scan.pl" "$r" "" 2>/dev/null | head -25 | while IFS=$'\t' read -r why f; do
-    [ "$why" = INJECT ] && why="eingeschleuste erste Zeile (Hintertür)"
+    [ "$why" = INJECT ] && why="injected first line (backdoor)"
     printf 'X|%s|sig|%s %s :: %s\n' "$r" "$(stat -c '%y' "$r/$f" 2>/dev/null | cut -c1-16)" "$f" "$why"; done
   # php inside image/ico files
   find "$r" -xdev -type f \( -name '*.ico' -o -name '*.png' -o -name '*.jpg' -o -name '*.gif' \) -size -300k -print0 2>/dev/null |
@@ -151,7 +152,7 @@ roots=$(find /home -mindepth 2 -maxdepth 6 \( -name 'node_modules' -o -name 'ven
      grep -vE '^/home/[^/]+\.[0-9]{9,}/')
 H installs_found "$(echo "$roots" | grep -c .)"
 
-# WordPress-Kern gegen die offiziellen Prüfsummen (api.wordpress.org), ohne Code der Website auszuführen
+# WordPress core against the official checksums (api.wordpress.org), without executing site code
 cat > "$TMPD/wpsum.php" <<'PHP'
 <?php
 $r = $argv[1]; $tmp = $argv[2];
@@ -166,22 +167,22 @@ if (!file_exists($cf)) {
   file_put_contents($cf, $d && !empty($d['checksums']) ? json_encode($d['checksums']) : '{}');
 }
 $sum = json_decode(file_get_contents($cf), true);
-if (!$sum) { echo "keine Prüfsummen für $ver/$loc
+if (!$sum) { echo "no checksums for $ver/$loc
 "; exit; }
 $out = array();
 foreach ($sum as $f => $md5) {
   if (strpos($f, 'wp-content/') === 0 || $f === 'wp-config-sample.php' || $f === 'readme.html' || $f === 'license.txt') continue;
-  if (file_exists("$r/$f") && md5_file("$r/$f") !== $md5) $out[] = "geändert: $f";
+  if (file_exists("$r/$f") && md5_file("$r/$f") !== $md5) $out[] = "modified: $f";
 }
 foreach (array('wp-admin', 'wp-includes') as $top) {
   $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$r/$top", FilesystemIterator::SKIP_DOTS));
   foreach ($it as $file) { $rel = substr($file->getPathname(), strlen($r) + 1);
-    if (!isset($sum[$rel]) && !preg_match('/(\.DS_Store|error_log|\.mo|\.po|\.json|\.l10n\.php)$/', $rel)) $out[] = "fremd: $rel"; }
+    if (!isset($sum[$rel]) && !preg_match('/(\.DS_Store|error_log|\.mo|\.po|\.json|\.l10n\.php)$/', $rel)) $out[] = "unexpected: $rel"; }
 }
-foreach (glob("$r/wp-*.php") as $file) { $rel = basename($file); if (!isset($sum[$rel]) && $rel !== 'wp-config.php') $out[] = "fremd: $rel"; }
+foreach (glob("$r/wp-*.php") as $file) { $rel = basename($file); if (!isset($sum[$rel]) && $rel !== 'wp-config.php') $out[] = "unexpected: $rel"; }
 foreach (array_slice($out, 0, 10) as $o) echo "$o
 ";
-if (count($out) > 10) echo "... insgesamt " . count($out) . " Abweichungen
+if (count($out) > 10) echo "... " . count($out) . " deviations in total
 ";
 PHP
 echo "$roots" | while read -r f; do

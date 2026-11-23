@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-deploy.py v2.0.0 - Universelles, rezept- und direktgesteuertes Linux-Deployment-Werkzeug.
-Basiert ausschliesslich auf der Python-Standardbibliothek (Python >= 3.11).
+deploy.py v2.0.0 - Universal, recipe- and directly-driven Linux deployment tool.
+Built exclusively on the Python standard library (Python >= 3.11).
 """
 from __future__ import annotations
 
@@ -71,10 +71,10 @@ AUTH_LINE_RE = re.compile(
 )
 
 class ConfigError(Exception):
-    """Fehler in Konfiguration, Parametern oder Syntax."""
+    """Error in configuration, parameters or syntax."""
 
 class StepFailed(Exception):
-    """Fehlschlag eines Ausfuehrungsschritts."""
+    """Failure of an execution step."""
 
 class UI:
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
@@ -123,7 +123,7 @@ def split_words(s: str) -> list[str]:
 def norm_mode(m: object) -> str:
     s = str(m).strip()
     if not re.fullmatch(r"0?[0-7]{3,4}", s):
-        raise ConfigError(f"mode muss oktal sein, z. B. '0755' (angegeben: {m!r})")
+        raise ConfigError(f"mode must be octal, e.g. '0755' (given: {m!r})")
     return format(int(s, 8), "o").rjust(3, "0")
 
 _VAR_RE = re.compile(r"\$\{(\w+)(?::-([^}]*))?\}|\$(\w+)")
@@ -226,7 +226,7 @@ def resolve_key_line(raw_line: str, base_dir: Path) -> str:
             cand = base_dir / f_path
             f_path = cand if cand.is_file() else Path.cwd() / f_path
         if not f_path.is_file():
-            raise ConfigError(f"Public-Key-Datei nicht gefunden: {f_path}")
+            raise ConfigError(f"Public key file not found: {f_path}")
         pub_content = f_path.read_text(encoding="utf-8").strip()
         pub_key = ""
         for pl in pub_content.splitlines():
@@ -235,11 +235,11 @@ def resolve_key_line(raw_line: str, base_dir: Path) -> str:
                 pub_key = pl
                 break
         if not pub_key:
-            raise ConfigError(f"Kein gueltiger Public-Key in {f_path} gefunden.")
+            raise ConfigError(f"No valid public key found in {f_path}.")
         line = line.replace(m.group(0), pub_key).strip()
 
     if not AUTH_LINE_RE.match(line):
-        raise ConfigError(f"Ungueltige SSH-Key-Zeile: {short(line, 60)!r}")
+        raise ConfigError(f"Invalid SSH key line: {short(line, 60)!r}")
     return line
 
 _TPL = re.compile(r"\{\{(.*?)\}\}", re.S)
@@ -262,7 +262,7 @@ def render(text: str, lookup, where: str = "") -> str:
             name, default = inner.split(":-", 1)
             name = name.strip()
         if not _NAME.fullmatch(name):
-            raise ConfigError(f"Ungueltiger Platzhalter {{{{{m.group(1)}}}}} in {where or 'Text'}")
+            raise ConfigError(f"Invalid placeholder {{{{{m.group(1)}}}}} in {where or 'text'}")
         val = lookup(name)
         if val is None or val == "":
             if default is not None:
@@ -274,7 +274,7 @@ def render(text: str, lookup, where: str = "") -> str:
 
     out = _TPL.sub(rep, text)
     if missing:
-        raise ConfigError(f"Unbekannte Variable(n) {', '.join(sorted(set(missing)))} in {where or 'Text'}")
+        raise ConfigError(f"Unknown variable(s) {', '.join(sorted(set(missing)))} in {where or 'Text'}")
     return out.replace("\x00LB\x00", "{{")
 
 RECIPE_KEYS = {"name", "version", "description", "requires"}
@@ -304,7 +304,7 @@ def _check_keys(d: dict, allowed: set[str], where: str) -> None:
     for k in d:
         if k not in allowed:
             hint = difflib.get_close_matches(k, sorted(allowed), n=1)
-            raise ConfigError(f"{where}: Unbekannter Schluessel '{k}'" + (f" (meintest du '{hint[0]}'?)" if hint else ""))
+            raise ConfigError(f"{where}: Unknown key '{k}'" + (f" (did you mean '{hint[0]}'?)" if hint else ""))
 
 @dataclass
 class VarSpec:
@@ -336,7 +336,7 @@ class Recipe:
 def _section(raw: dict, name: str, path: Path) -> list[dict]:
     v = raw.get(name, [])
     if not isinstance(v, list) or any(not isinstance(x, dict) for x in v):
-        raise ConfigError(f"{path}: [[{name}]] muss eine Liste von Tabellen sein")
+        raise ConfigError(f"{path}: [[{name}]] must be a list of tables")
     return v
 
 def validate_recipe(path: Path, raw: dict) -> Recipe:
@@ -345,12 +345,12 @@ def validate_recipe(path: Path, raw: dict) -> Recipe:
     _check_keys(r, RECIPE_KEYS, f"{path} [recipe]")
     name = r.get("name") or path.parent.name
     if not NAME_RE.match(name):
-        raise ConfigError(f"{path}: Ungueltiger Rezeptname {name!r}")
+        raise ConfigError(f"{path}: Invalid recipe name {name!r}")
 
     vars_: dict[str, VarSpec] = {}
     for k, v in raw.get("vars", {}).items():
         if not _NAME.fullmatch(k):
-            raise ConfigError(f"{path} [vars]: Ungueltiger Variablenname {k!r}")
+            raise ConfigError(f"{path} [vars]: Invalid variable name {k!r}")
         if isinstance(v, dict):
             _check_keys(v, VAR_KEYS, f"{path} [vars.{k}]")
             d = v.get("default")
@@ -368,53 +368,53 @@ def validate_recipe(path: Path, raw: dict) -> Recipe:
         w = f"{path} [[preflight]] #{i}"
         _check_keys(p, PREFLIGHT_KEYS, w)
         if "run" not in p:
-            raise ConfigError(f"{w}: 'run' fehlt")
+            raise ConfigError(f"{w}: 'run' missing")
 
     for i, u in enumerate(sec["users"], 1):
         w = f"{path} [[users]] #{i}"
         _check_keys(u, USER_KEYS, w)
         if not USER_RE.match(str(u.get("name", ""))) and "{{" not in str(u.get("name", "")):
-            raise ConfigError(f"{w}: Ungueltiger Benutzername {u.get('name')!r}")
+            raise ConfigError(f"{w}: Invalid user name {u.get('name')!r}")
 
     for i, f in enumerate(sec["files"], 1):
         w = f"{path} [[files]] #{i}"
         _check_keys(f, FILE_KEYS, w)
         if "dest" not in f:
-            raise ConfigError(f"{w}: 'dest' fehlt")
+            raise ConfigError(f"{w}: 'dest' missing")
         if ("src" in f) == ("content" in f):
-            raise ConfigError(f"{w} ({f['dest']}): Genau eines von 'src' oder 'content' angeben")
+            raise ConfigError(f"{w} ({f['dest']}): Specify exactly one of 'src' or 'content'")
         norm_mode(f.get("mode", "0644")) if "{{" not in str(f.get("mode", "")) else None
 
     for i, b in enumerate(sec["blocks"], 1):
         w = f"{path} [[blocks]] #{i}"
         _check_keys(b, BLOCK_KEYS, w)
         if "dest" not in b or "id" not in b:
-            raise ConfigError(f"{w}: 'dest' und 'id' sind Pflicht")
+            raise ConfigError(f"{w}: 'dest' and 'id' are required")
 
     for i, a in enumerate(sec["authorized_keys"], 1):
         w = f"{path} [[authorized_keys]] #{i}"
         _check_keys(a, AUTH_KEYS, w)
         if "user" not in a:
-            raise ConfigError(f"{w}: 'user' fehlt")
+            raise ConfigError(f"{w}: 'user' missing")
 
     for i, x in enumerate(sec["remove"], 1):
         w = f"{path} [[remove]] #{i}"
         _check_keys(x, REMOVE_KEYS, w)
         if "path" not in x:
-            raise ConfigError(f"{w}: 'path' fehlt")
+            raise ConfigError(f"{w}: 'path' missing")
 
     for sect in ("steps", "cleanup", "uninstall"):
         for i, s in enumerate(sec[sect], 1):
             w = f"{path} [[{sect}]] #{i}"
             _check_keys(s, STEP_KEYS, w)
             if "run" not in s:
-                raise ConfigError(f"{w}: 'run' fehlt")
+                raise ConfigError(f"{w}: 'run' missing")
 
     for i, t in enumerate(sec["tests"], 1):
         w = f"{path} [[tests]] #{i}"
         _check_keys(t, TEST_KEYS, w)
         if "run" not in t or "name" not in t:
-            raise ConfigError(f"{w}: 'name' und 'run' sind Pflicht")
+            raise ConfigError(f"{w}: 'name' and 'run' are required")
 
     return Recipe(
         path, path.parent, name, str(r.get("version", "")), str(r.get("description", "")),
@@ -441,16 +441,16 @@ def find_recipe(spec: str) -> Path:
     for c in cands:
         if c.is_file() and c.suffix == ".toml":
             return c.resolve()
-    raise ConfigError(f"Rezept {spec!r} nicht gefunden.")
+    raise ConfigError(f"Recipe {spec!r} not found.")
 
 def push_overrides(args: argparse.Namespace, S: dict[str, str]) -> dict[str, str]:
-    """Werte fuer recipes/push. Nur was auf der Kommandozeile steht - kein Profil-Default."""
+    """Values for recipes/push. Only what is on the command line - no profile default."""
     src_path_str = getattr(args, "file", None) or S.get("PUSH_SRC") or ""
     if not src_path_str:
-        raise ConfigError("push: Keine Quelldatei angegeben (Datei als Argument oder PUSH_SRC)")
+        raise ConfigError("push: No source file given (file as argument or PUSH_SRC)")
     f = Path(os.path.expanduser(src_path_str)).resolve()
     if not f.is_file():
-        raise ConfigError(f"Quelldatei nicht gefunden: {f}")
+        raise ConfigError(f"Source file not found: {f}")
 
     dest = getattr(args, "dest", None) or S.get("PUSH_DEST") or ("/usr/local/bin/" + re.sub(r"\.(sh|py|pl|rb)$", "", f.name))
     mode = getattr(args, "mode", None) or S.get("PUSH_MODE") or "0755"
@@ -475,7 +475,7 @@ def push_overrides(args: argparse.Namespace, S: dict[str, str]) -> dict[str, str
     user = getattr(args, "system_user", None)
     if user:
         if not USER_RE.match(user):
-            raise ConfigError(f"Ungueltiger Systembenutzer: {user!r}")
+            raise ConfigError(f"Invalid system user: {user!r}")
         out["PUSH_USER"] = user
         out["PUSH_USER_GROUPS"] = " ".join(split_words(S.get("SYSTEM_USER_GROUPS") or "sshallow"))
 
@@ -483,7 +483,7 @@ def push_overrides(args: argparse.Namespace, S: dict[str, str]) -> dict[str, str
     if sudoers:
         s_name = getattr(args, "sudoers_name", None) or "push"
         if not SUDOERS_NAME_RE.match(s_name):
-            raise ConfigError(f"SUDOERS_NAME {s_name!r} ungueltig (keine Punkte oder Sonderzeichen erlaubt).")
+            raise ConfigError(f"SUDOERS_NAME {s_name!r} invalid (no dots or special characters allowed).")
         out["PUSH_SUDOERS"] = sudoers.strip()
         out["PUSH_SUDOERS_NAME"] = s_name
 
@@ -499,7 +499,7 @@ def push_overrides(args: argparse.Namespace, S: dict[str, str]) -> dict[str, str
             try:
                 ipaddress.ip_network(part, strict=False)
             except ValueError:
-                raise ConfigError(f"WHITELIST_IP {part!r} ist keine gueltige IP oder CIDR-Range.")
+                raise ConfigError(f"WHITELIST_IP {part!r} is not a valid IP or CIDR range.")
         out["PUSH_WHITELIST_IP"] = whitelist
 
     tests = getattr(args, "test", None) or []
@@ -543,9 +543,9 @@ def resolve_targets(spec: str, S: dict[str, str], inv: dict) -> list[Target]:
         if token.startswith("@"):
             g = token[1:]
             if g not in groups:
-                raise ConfigError(f"Gruppe @{g} nicht im Inventar vorhanden.")
+                raise ConfigError(f"Group @{g} not present in the inventory.")
             if g in seen:
-                raise ConfigError(f"Gruppen-Schleife bei @{g}")
+                raise ConfigError(f"Group loop at @{g}")
             out: list[str] = []
             for t in groups[g]:
                 out += expand(t, seen + (g,))
@@ -576,7 +576,7 @@ def resolve_targets(spec: str, S: dict[str, str], inv: dict) -> list[Target]:
             continue
         m = _TGT_RE.match(n)
         if not m:
-            raise ConfigError(f"Ziel {n!r} ungueltig (Format: [user@]host[:port] oder @gruppe)")
+            raise ConfigError(f"Target {n!r} invalid (format: [user@]host[:port] or @group)")
         targets.append(Target(
             n, m.group("host"), m.group("user") or dflt.get("user", S["SSH_USER"]),
             int(m.group("port") or dflt.get("port", S["SSH_PORT"])),
@@ -597,14 +597,14 @@ PRELUDE = 'export LC_ALL=C LANG=C\nexport PATH="/usr/local/sbin:/usr/local/bin:/
 def ssh_hint(err: str) -> str:
     e = err.lower()
     table = [
-        ("permission denied", "SSH-Authentifizierung abgelehnt (Key, User, AllowUsers oder AllowGroups pruefen)."),
-        ("timed out", "Verbindungs-Timeout (Host unerreichbar, Firewall oder falscher Port)."),
-        ("connection refused", "Verbindung abgewiesen (sshd laeuft nicht oder Port falsch)."),
-        ("could not resolve", "DNS-Aufloesung fuer Hostname fehlgeschlagen."),
-        ("host key verification failed", "Host-Key stimmt nicht mit known_hosts ueberein."),
-        ("remote host identification has changed", "Host-Key hat sich geaendert."),
+        ("permission denied", "SSH authentication rejected (check key, user, AllowUsers or AllowGroups)."),
+        ("timed out", "Connection timeout (host unreachable, firewall or wrong port)."),
+        ("connection refused", "Connection refused (sshd not running or wrong port)."),
+        ("could not resolve", "DNS resolution for hostname failed."),
+        ("host key verification failed", "Host key does not match known_hosts."),
+        ("remote host identification has changed", "Host key has changed."),
         ("a password is required", "sudo verlangt Passwort (NOPASSWD einrichten)."),
-        ("is not in the sudoers", "SSH-Benutzer besitzt keine sudo-Rechte.")
+        ("is not in the sudoers", "SSH user has no sudo rights.")
     ]
     for needle, text in table:
         if needle in e:
@@ -622,11 +622,11 @@ def _run(argv: list[str], stdin: bytes | None, timeout: int, env: dict | None = 
         return Proc(
             124,
             (e.stdout or b"").decode("utf-8", "replace"),
-            ((e.stderr or b"").decode("utf-8", "replace") + f"\nTimeout nach {timeout}s"),
+            ((e.stderr or b"").decode("utf-8", "replace") + f"\nTimeout after {timeout}s"),
             timed_out=True
         )
     except FileNotFoundError as e:
-        return Proc(127, "", f"Programm nicht gefunden: {e.filename}")
+        return Proc(127, "", f"Program not found: {e.filename}")
 
 class Transport:
     needs_sudo = False
@@ -730,7 +730,7 @@ class Ephemeral:
             cls._dir = None
 
 class ProbeTransport(Transport):
-    """Transport ohne Aktionen: baut Rezepte lokal auf, ohne einen Server zu beruehren."""
+    """Action-free transport: builds recipes locally without touching a server."""
     needs_sudo = False
 
     def exec(self, script: str, *, sudo: bool = True, timeout: int = 120) -> Proc:
@@ -771,15 +771,15 @@ class HostLog:
 
         if tag in ("CHG", "DRY"):
             self.counts["chg"] += 1
-            short_item = msg.split(":")[0].replace("neu angelegt", "").strip()
+            short_item = msg.split(":")[0].replace("newly created", "").strip()
             if "/usr/local/bin/" in short_item:
                 short_item = Path(short_item).name
             elif "/etc/sudoers.d/" in short_item:
                 short_item = "sudoers:" + Path(short_item).name
             elif "authorized_keys" in short_item:
                 short_item = "authorized_keys"
-            elif "Benutzer" in short_item:
-                short_item = "user:" + short_item.replace("Benutzer", "").strip()
+            elif "User" in short_item:
+                short_item = "user:" + short_item.replace("User", "").strip()
             elif "Whitelist" in short_item:
                 short_item = "whitelist"
 
@@ -884,8 +884,8 @@ class HostRunner:
                        if spec.required and not truthy(self.lookup(k) or "")]
             if missing:
                 raise ConfigError(
-                    f"Pflichtwert(e) fehlen: {', '.join(missing)} "
-                    f"(Profil, .env oder -s NAME=WERT)"
+                    f"Missing required value(s): {', '.join(missing)} "
+                    f"(profile, .env or -s NAME=VALUE)"
                 )
         self.items: list[Item] = []
         self.homes: dict[str, str] = {}
@@ -968,15 +968,15 @@ class HostRunner:
     def connect(self) -> None:
         p = self.sh("echo DPL_OK; id -un; uname -sr", sudo=False, timeout=int(self.cfg.S["CONNECT_TIMEOUT"]) + 5)
         if p.rc != 0 or "DPL_OK" not in p.out:
-            raise StepFailed(f"SSH-Verbindung fehlgeschlagen (rc={p.rc}) {ssh_hint(p.err)}\n{short(p.err, 300)}")
+            raise StepFailed(f"SSH connection failed (rc={p.rc}) {ssh_hint(p.err)}\n{short(p.err, 300)}")
         lines = p.out.split("\n")
         who = lines[1].strip() if len(lines) > 1 else "?"
         sysinfo = lines[2].strip() if len(lines) > 2 else ""
         if self.tr.needs_sudo:
             qq = self.sh("id -u", sudo=True, timeout=10)
             if qq.rc != 0 or qq.out.strip() != "0":
-                raise StepFailed("sudo -n funktioniert nicht (NOPASSWD noetig). " + ssh_hint(qq.err))
-        self.log.log("PASS", f"Verbunden als {who} ({sysinfo})" + (" mit sudo" if self.tr.needs_sudo else ""))
+                raise StepFailed("sudo -n does not work (NOPASSWD required). " + ssh_hint(qq.err))
+        self.log.log("PASS", f"Connected as {who} ({sysinfo})" + (" with sudo" if self.tr.needs_sudo else ""))
 
     def preflight(self) -> bool:
         r = self.recipe
@@ -989,7 +989,7 @@ class HostRunner:
             )
             miss = p.out.strip()
             if p.rc != 0 or miss:
-                self.log.log("FAIL", f"Benoetigte Programme fehlen: {miss or '?'}")
+                self.log.log("FAIL", f"Required programs missing: {miss or '?'}")
                 ok = False
             else:
                 self.log.log("PASS", f"Programme verifiziert ({', '.join(r.requires)})")
@@ -1034,7 +1034,7 @@ class HostRunner:
             pat = os.path.expanduser(self.R(pat, where + " key_files"))
             hits = sorted(globmod.glob(pat))
             if not hits:
-                raise ConfigError(f"{where}: key_files {pat!r} findet keine Dateien.")
+                raise ConfigError(f"{where}: key_files {pat!r} finds no files.")
             for h in hits:
                 for raw_ln in Path(h).read_text(encoding="utf-8").splitlines():
                     resolved = resolve_key_line(raw_ln, self.recipe.dir)
@@ -1067,7 +1067,7 @@ class HostRunner:
         where = f"authorized_keys #{i + 1}"
         user = self.R(spec["user"], where + " user")
         if not USER_RE.match(user):
-            raise ConfigError(f"{where}: Ungueltiger Benutzername {user!r}")
+            raise ConfigError(f"{where}: Invalid user name {user!r}")
         bid = f"{self.recipe.name}:{spec.get('id', 'keys')}"
 
         if ephemeral:
@@ -1103,7 +1103,7 @@ class HostRunner:
             "id": bid, "comment": "#", "position": "bottom", "owner": user, "group": "",
             "mode": "600", "dir_mode": "700", "enforce": True, "validate": "",
             "user": user, "auth": True, "key_needle": needle,
-            "title": f"authorized_keys fuer {user} ({len(lines)} Key(s))"
+            "title": f"authorized_keys for {user} ({len(lines)} Key(s))"
         }
         return it
 
@@ -1123,7 +1123,7 @@ class HostRunner:
                 continue
             name = self.R(u["name"], f"users[{i}].name")
             if not USER_RE.match(name):
-                raise ConfigError(f"users[{i}]: Ungueltiger Benutzername {name!r}")
+                raise ConfigError(f"users[{i}]: Invalid user name {name!r}")
             it = Item("user", n, name, u)
             it.extra = {
                 "home": self.R(u.get("home", f"/home/{name}"), "users.home"),
@@ -1142,11 +1142,11 @@ class HostRunner:
                 continue
             dest = self.R(f["dest"], f"files[{i}].dest")
             if not dest.startswith("/"):
-                raise ConfigError(f"files[{i}]: dest muss absolut sein: {dest}")
+                raise ConfigError(f"files[{i}]: dest must be absolute: {dest}")
             if "src" in f:
                 src = self.src_path(f["src"], f"files[{i}].src")
                 if not src.is_file():
-                    raise ConfigError(f"files[{i}]: Quelldatei fehlt: {src}")
+                    raise ConfigError(f"files[{i}]: Source file missing: {src}")
                 data = src.read_bytes()
             else:
                 data = f["content"].encode()
@@ -1238,7 +1238,7 @@ class HostRunner:
                     f'echo "{i} USER $e ${{cb:--}} $mine"'
                 )
 
-        pr = self.must(self.sh("\n".join(parts), strict=False), "Ist-Zustand erfassen")
+        pr = self.must(self.sh("\n".join(parts), strict=False), "Capture current state")
         info: dict[int, list[str]] = {}
         for ln in pr.out.splitlines():
             tok = ln.split(" ")
@@ -1249,9 +1249,9 @@ class HostRunner:
         for it in items:
             st = info.get(it.idx, ["MISSING"])
             if st[0] == "SYMLINK":
-                raise StepFailed(f"{it.label} ist ein Symlink - Bearbeitung abgebrochen.")
+                raise StepFailed(f"{it.label} is a symlink - edit aborted.")
             if st[0] == "DIR":
-                raise StepFailed(f"{it.label} ist ein Verzeichnis, erwartet wird Datei.")
+                raise StepFailed(f"{it.label} is a directory, expected a file.")
             getattr(self, f"stat_{it.kind}")(it, st, force)
 
     def stat_file(self, it: Item, st: list[str], force: bool) -> None:
@@ -1270,16 +1270,16 @@ class HostRunner:
         if same:
             it.status = "ok" if meta_ok else "meta"
             if it.reg_recipe not in ("", me):
-                it.conflict = {"kind": "other-recipe", "msg": f"Identische Datei gehoert zu Rezept '{it.reg_recipe}'."}
+                it.conflict = {"kind": "other-recipe", "msg": f"Identical file belongs to recipe '{it.reg_recipe}'."}
             return
         it.status = "update"
         if it.reg_recipe == me:
             if it.reg_sha and it.remote_sha != it.reg_sha:
-                it.conflict = {"kind": "drift", "msg": "Datei wurde manuell geaendert (wird ueberschrieben, Backup angelegt)."}
+                it.conflict = {"kind": "drift", "msg": "File was changed manually (will be overwritten, backup created)."}
         elif it.reg_recipe == "":
-            it.conflict = {"kind": "unmanaged", "msg": "Existiert bereits, nicht von deploy.py angelegt (Backup angelegt)."}
+            it.conflict = {"kind": "unmanaged", "msg": "Already exists, not created by deploy.py (backup created)."}
         else:
-            it.conflict = {"kind": "other-recipe", "msg": f"Gehoert zu Rezept '{it.reg_recipe}' (Backup angelegt)."}
+            it.conflict = {"kind": "other-recipe", "msg": f"Belongs to recipe '{it.reg_recipe}' (backup created)."}
 
     def stat_remove(self, it: Item, st: list[str], force: bool) -> None:
         reg = st[st.index("REG") + 1:] if "REG" in st else []
@@ -1291,7 +1291,7 @@ class HostRunner:
         it.remote_meta = " ".join(st[2:5])
         it.status = "remove"
         if it.reg_recipe != self.recipe.name:
-            it.conflict = {"kind": "remove-foreign", "msg": "Soll geloescht werden, stammt nicht von diesem Rezept (Backup angelegt)."}
+            it.conflict = {"kind": "remove-foreign", "msg": "Scheduled for deletion, does not come from this recipe (backup created)."}
 
     def stat_block(self, it: Item, st: list[str], force: bool) -> None:
         x = it.extra
@@ -1305,7 +1305,7 @@ class HostRunner:
         it.extra.update({"existed": True, "had_block": has, "prev_b64": b64(cur) if has else None})
         it.remote_meta = f"{mode} {own} {grp}"
         if not has and already:
-            # Schluessel steht schon in der Datei (handgepflegt): nicht doppelt eintragen.
+            # Key already in the file (hand-maintained): do not add it twice.
             it.status = "ok"
             it.extra["adopted"] = True
         elif not has:
@@ -1329,8 +1329,8 @@ class HostRunner:
         else:
             it.status = "exists"
             if not truthy(self.cfg.S.get("ALLOW_EXISTING_USER", "0")):
-                who = f"angelegt von '{created_by}'" if created_by != "-" else "bereits auf dem System vorhanden"
-                it.conflict = {"kind": "user-exists", "msg": f"Benutzer existiert ({who}). Wird nur mitbenutzt (keine Aenderung an Shell/Home)."}
+                who = f"created by '{created_by}'" if created_by != "-" else "already present on the system"
+                it.conflict = {"kind": "user-exists", "msg": f"User exists ({who}). Reused only (no change to shell/home)."}
 
     def analyze(self) -> bool:
         self.connect()
@@ -1366,12 +1366,12 @@ class HostRunner:
                     f"Upload {it.label}"
                 )
                 if up.out.split()[0] != it.sha:
-                    raise StepFailed(f"Pruefsummenfehler beim Upload von {it.label}")
+                    raise StepFailed(f"Checksum error while uploading {it.label}")
 
                 script = f"install -m {it.mode} -o root -g root {s}/u{it.idx} {s}/v{it.idx}\n"
                 if it.spec.get("validate"):
-                    # Zweimal rendern: erst {{FILE}} einsetzen, dann Platzhalter aufloesen,
-                    # die selbst erst durch eine Variable entstanden sind (z. B. PUSH_VALIDATE).
+                    # Render twice: first substitute {{FILE}}, then resolve placeholders
+                    # that themselves only appeared through a variable (e.g. PUSH_VALIDATE).
                     fpath = f"{self.stage}/v{it.idx}"
                     vcmd = self.R(it.spec["validate"], f"files[{it.idx}].validate", {"FILE": fpath})
                     script += self.R(vcmd, f"files[{it.idx}].validate", {"FILE": fpath}) + "\n"
@@ -1388,7 +1388,7 @@ class HostRunner:
 
             v = self.sh(script)
             if v.rc != 0:
-                raise StepFailed(f"Validierung von {what} fehlgeschlagen (rc={v.rc}):\n{short(v.err or v.out, 600)}")
+                raise StepFailed(f"Validation of {what} failed (rc={v.rc}):\n{short(v.err or v.out, 600)}")
             self.log.log("PASS", f"Validiert: {what}" if it.spec.get("validate") or it.extra.get("validate") else f"Bereitgestellt: {what}")
 
     def runs_root(self) -> str:
@@ -1398,7 +1398,7 @@ class HostRunner:
         self.run_dir = f"{self.runs_root()}/{self.cfg.run_id}"
         self.must(
             self.sh(f"mkdir -p -m 700 {q(self.run_dir)}/files {q(self.reg_dir)}/files {q(self.reg_dir)}/users"),
-            "Laufverzeichnis initialisieren"
+            "Initialize run directory"
         )
         self.save_manifest("partial")
 
@@ -1411,11 +1411,11 @@ class HostRunner:
             f'  age=$(( $(date +%s) - $(stat -c %Y {q(lk)}) ))\n'
             f'  if [ "$age" -gt 3600 ]; then rm -rf {q(lk)}; mkdir {q(lk)}; '
             f'else echo "gesperrt: $(cat {q(lk)}/info 2>/dev/null)"; exit 3; fi\n'
-            f'fi\necho "run={self.cfg.run_id} von={os.environ.get("USER", "?")}@{os.uname().nodename}" > {q(lk)}/info'
+            f'fi\necho "run={self.cfg.run_id} by={os.environ.get("USER", "?")}@{os.uname().nodename}" > {q(lk)}/info'
         )
         p = self.sh(script, strict=False)
         if p.rc != 0:
-            raise StepFailed(f"Host ist durch einen anderen Lauf gesperrt: {short(p.out + p.err, 200)}")
+            raise StepFailed(f"Host is locked by another run: {short(p.out + p.err, 200)}")
         try:
             yield
         finally:
@@ -1471,15 +1471,15 @@ class HostRunner:
                 f': > {q(used)}\n'
             )
             self.record({"type": "user", "name": nm, "created": True, "used": used, "created_by": f"{rd}/users/{nm}.created_by"})
-            self.must(self.sh(script), f"Benutzer {nm} anlegen")
-            self.log.log("CHG", f"Benutzer {nm} angelegt (Gruppen: {','.join(x['groups']) or 'keine'})")
+            self.must(self.sh(script), f"Create user {nm}")
+            self.log.log("CHG", f"User {nm} created (groups: {','.join(x['groups']) or 'none'})")
         else:
             self.record({"type": "user", "name": nm, "created": False, "used": used})
             script = f'mkdir -p {q(rd + "/users")}; : > {q(used)}\n'
             if x["groups"]:
                 script += f'for g in {" ".join(q(g) for g in x["groups"])}; do getent group "$g" >/dev/null && usermod -aG "$g" -- {q(nm)} || true; done\n'
-            self.must(self.sh(script), f"Benutzer {nm} registrieren")
-            self.log.log("OK" if it.status == "ok" else "WARN", f"Benutzer {nm}: Vorhanden (Gruppen synchronisiert)")
+            self.must(self.sh(script), f"Register user {nm}")
+            self.log.log("OK" if it.status == "ok" else "WARN", f"User {nm}: Present (groups synchronized)")
         self.changed_any = True
 
     def apply_file_like(self, it: Item) -> None:
@@ -1508,7 +1508,7 @@ class HostRunner:
 
         if it.status == "meta":
             m_script = meta_script(it.label, x["mode"], x["owner"], x["group"]) if is_block else meta_script(it.label, it.mode, it.owner, it.group)
-            self.must(self.sh(m_script), f"Rechte anpassen fuer {it.label}")
+            self.must(self.sh(m_script), f"Adjust permissions for {it.label}")
             return
 
         script = f'dest={d}\ndir=$(dirname "$dest")\n'
@@ -1540,9 +1540,9 @@ class HostRunner:
                 f'mv -f "$tmp" "$dest"\n' + self.reg_write_script(it) + 'sha256sum "$dest" | cut -d" " -f1\n'
             )
 
-        p = self.must(self.sh(script), f"Aktivieren von {it.label}")
+        p = self.must(self.sh(script), f"Activate {it.label}")
         if not is_block and p.out.strip().split("\n")[-1] != it.sha:
-            raise StepFailed(f"{it.label}: Pruefsumme nach Schreiben nicht identisch.")
+            raise StepFailed(f"{it.label}: checksum not identical after writing.")
         self.changed_any = True
 
     def adopt_file(self, it: Item) -> None:
@@ -1563,7 +1563,7 @@ class HostRunner:
     def apply_items(self) -> None:
         for it in self.items:
             if it.kind == "block" and it.extra.get("user") in self.skipped_users:
-                self.log.log("SKIP", f"{it.extra['title']} (Benutzer uebersprungen)")
+                self.log.log("SKIP", f"{it.extra['title']} (user skipped)")
                 continue
             if it.conflict and it.decision != "overwrite":
                 self.log.log("SKIP", f"{it.label}: Uebersprungen laut Richtlinie")
@@ -1576,10 +1576,10 @@ class HostRunner:
                 self.apply_user(it)
             elif it.kind == "remove":
                 if it.status == "ok":
-                    self.log.log("OK", f"{it.label}: Bereits entfernt")
+                    self.log.log("OK", f"{it.label}: Already removed")
                 else:
                     self.apply_remove(it)
-                    self.log.log("CHG", f"Entfernt: {it.label}")
+                    self.log.log("CHG", f"Removed: {it.label}")
             else:
                 title = it.extra.get("title", it.label)
                 if it.status == "ok":
@@ -1590,19 +1590,19 @@ class HostRunner:
                         self.log.log("OK", f"{title}: Unveraendert")
                     continue
                 self.apply_file_like(it)
-                w = {"create": "neu angelegt", "update": "aktualisiert", "meta": "Rechte angepasst"}[it.status]
+                w = {"create": "newly created", "update": "updated", "meta": "permissions adjusted"}[it.status]
                 self.log.log("CHG", f"{title}: {w}")
 
     def step_wanted(self, st: dict, name: str) -> tuple[bool, str]:
         if not self.var_ok(st):
             return False, "Variable"
         if st.get("when_changed") and not self.changed_any:
-            return False, "keine Aenderung"
+            return False, "no change"
         for key, want in (("if_cmd", True), ("unless_cmd", False)):
             if key in st:
                 p = self.sh(self.R(st[key], f"step '{name}' {key}"), sudo=st.get("sudo", True), strict=False, timeout=60)
                 if (p.rc == 0) != want:
-                    return False, "bereits erledigt" if key == "unless_cmd" else f"{key} nicht erfuellt"
+                    return False, "already done" if key == "unless_cmd" else f"{key} not satisfied"
         return True, ""
 
     def run_step(self, st: dict, idx: int, record_undo: bool = True) -> None:
@@ -1615,7 +1615,7 @@ class HostRunner:
         t = int(st.get("timeout", self.timeout))
         p = self.exec_local(script, t) if st.get("where", "remote") == "local" else self.sh(script, sudo=st.get("sudo", True), timeout=t)
         if p.rc != 0 and not st.get("ignore_errors", False):
-            raise StepFailed(f"Schritt '{name}' fehlgeschlagen (rc={p.rc})\n{short(p.err or p.out, 800)}")
+            raise StepFailed(f"Step '{name}' failed (rc={p.rc})\n{short(p.err or p.out, 800)}")
         self.log.log("WARN" if p.rc != 0 else "CHG", f"{name}" + (f" (ignoriert, rc={p.rc})" if p.rc != 0 else ""))
         if st.get("when_changed") is None:
             self.changed_any = True
@@ -1655,7 +1655,7 @@ class HostRunner:
                     f'grp={q(x["group"])}; [ -n "$grp" ] || grp=$(id -gn {q(x["owner"])} 2>/dev/null || echo {q(x["owner"])});\n'
                     f'chown {q(x["owner"])}:"$grp" "$tmp"; chmod {x["mode"]} "$tmp"; mv -f "$tmp" {q(it.label)}\n'
                 )
-                self.must(self.sh(comp + install_part), "Temporaeren Test-Schluessel einrichten")
+                self.must(self.sh(comp + install_part), "Set up temporary test key")
             yield
         finally:
             for it in added:
@@ -1674,14 +1674,14 @@ class HostRunner:
                     )
                     self.sh(comp + revert_part, strict=False)
             if added:
-                self.log.log("INFO", "Temporaerer Test-Schluessel entfernt")
+                self.log.log("INFO", "Temporary test key removed")
 
     def run_tests(self, only: list[str] | None = None) -> bool:
         target_filter = self.cfg.S.get("TEST_HOST", "").strip() or self.cfg.S.get("TEST_TARGETS", "").strip()
         if target_filter:
             allowed = split_words(target_filter)
             if self.t.name not in allowed and self.t.host not in allowed:
-                self.log.log("SKIP", f"Tests uebersprungen (nur fuer {target_filter} konfiguriert)")
+                self.log.log("SKIP", f"Tests skipped (configured only for {target_filter})")
                 return True
 
         all_ok = True
@@ -1701,7 +1701,7 @@ class HostRunner:
                     self.log.log("FAIL" if crit else "WARN", f"Test: {nm}", detail)
                     all_ok = all_ok and not crit
         if n_run == 0 and self.recipe.tests:
-            self.log.log("WARN", "Keine Tests ausgefuehrt")
+            self.log.log("WARN", "No tests executed")
         return all_ok
 
     def one_test(self, t: dict) -> list[tuple[str, bool, str]]:
@@ -1714,7 +1714,7 @@ class HostRunner:
 
         if kind == "ssh":
             if not isinstance(self.tr, SSHTransport):
-                return [("", False, "kind=ssh erfordert SSH-Transport (nicht local)")]
+                return [("", False, "kind=ssh requires SSH transport (not local)")]
             raw_keys = split_words(self.R(t.get("key", "ephemeral"), f"test '{t['name']}' key"))
             runs = []
             for tok in raw_keys:
@@ -1726,13 +1726,13 @@ class HostRunner:
 
         out: list[tuple[str, bool, str]] = []
         for label, key in runs:
-            proc = Proc(1, "", "nicht ausgefuehrt")
-            ok, problems = False, ["nicht ausgefuehrt"]
+            proc = Proc(1, "", "not executed")
+            ok, problems = False, ["not executed"]
             for attempt in range(tries):
                 if kind == "ssh":
                     assert isinstance(self.tr, SSHTransport) and key
                     if not os.path.exists(key):
-                        proc = Proc(1, "", f"Key-Datei fehlt: {key}")
+                        proc = Proc(1, "", f"Key file missing: {key}")
                     else:
                         proc = self.tr.raw(self.R(t["user"], f"test '{name}' user"), key, cmd, timeout)
                 elif kind == "local":
@@ -1748,7 +1748,7 @@ class HostRunner:
                         problems.append(f"rc={proc.rc}, erwartet {erc_list}")
                 for pat in ([t["expect"]] if isinstance(t.get("expect"), str) else t.get("expect", [])):
                     if not re.search(pat, proc.out, re.M):
-                        problems.append(f"Erwartetes Muster nicht gefunden: /{pat}/")
+                        problems.append(f"Expected pattern not found: /{pat}/")
                 for pat in ([t["expect_not"]] if isinstance(t.get("expect_not"), str) else t.get("expect_not", [])):
                     if re.search(pat, proc.out + "\n" + proc.err, re.M):
                         problems.append(f"Unerwartetes Muster gefunden: /{pat}/")
@@ -1769,9 +1769,9 @@ class HostRunner:
         cur = self.sh(f"head -c 300000 {q(it.label)}", strict=False).out
         diff = difflib.unified_diff(
             cur.splitlines(), it.data.decode("utf-8", "replace").splitlines(),
-            "Vorhanden", "Neu", lineterm="", n=2
+            "Present", "New", lineterm="", n=2
         )
-        return "\n".join(list(diff)[:80]) or "(Keine Unterschiede)"
+        return "\n".join(list(diff)[:80]) or "(No differences)"
 
     def apply(self) -> bool:
         try:
@@ -1787,7 +1787,7 @@ class HostRunner:
                             self.run_step(st, i + 1)
                         self.save_manifest("applied")
                     except StepFailed:
-                        self.log.log("WARN", "Fehler waehrend Installation - Fuehre Rollback aus...")
+                        self.log.log("WARN", "Error during installation - running rollback...")
                         self.rollback_ops(self.ops)
                         self.save_manifest("rolled-back")
                         raise
@@ -1832,8 +1832,8 @@ class HostRunner:
                     s = f"rm -f {q(op['used'])}\n"
                     if op.get("created"):
                         s += f"userdel -- {q(nm)} || true\nrm -f {q(op['created_by'])}\n"
-                    self.must(self.sh(s, strict=False), f"Benutzer {nm} zuruecksetzen")
-                    self.log.log("CHG", f"Zurueckgesetzt: Benutzer {nm}")
+                    self.must(self.sh(s, strict=False), f"Reset user {nm}")
+                    self.log.log("CHG", f"Reset: user {nm}")
                     continue
                 if t == "remove":
                     d = q(op["path"])
@@ -1851,8 +1851,8 @@ class HostRunner:
                         f'  if [ -e {d} ]; then chown --reference={d} "$tmp"; chmod --reference={d} "$tmp"; fi; mv -f "$tmp" {d}; fi\n'
                         f'rm -f "$out"\n'
                     )
-                    self.must(self.sh(script), f"Block {op['id']} zuruecksetzen")
-                    self.log.log("CHG", f"Block zurueckgesetzt: {op['id']} in {op['dest']}")
+                    self.must(self.sh(script), f"Reset block {op['id']}")
+                    self.log.log("CHG", f"Block reset: {op['id']} in {op['dest']}")
                     continue
 
                 d = q(op["dest"])
@@ -1861,9 +1861,9 @@ class HostRunner:
                     self.must(self.sh(f"rm -f {d} {q(rf)}"), f"Entferne {op['dest']}")
                 elif op.get("backup"):
                     self.must(self.sh(f'cp -a {rd}/{op["backup"]} {d} && rm -f {q(rf)}'), f"Wiederherstellen {op['dest']}")
-                self.log.log("CHG", f"Zurueckgesetzt: {op['dest']}")
+                self.log.log("CHG", f"Reset: {op['dest']}")
             except StepFailed as e:
-                self.log.log("FAIL", f"Rollback-Schritt fehlgeschlagen: {e}")
+                self.log.log("FAIL", f"Rollback step failed: {e}")
 
     def cmd_test(self) -> bool:
         if not self.analyze():
@@ -1874,7 +1874,7 @@ class HostRunner:
             names = ", ".join(Path(m).name if m.startswith("/usr/local/bin/") else m for m in missing)
             self.log.log(
                 "SKIP",
-                f"Noch nicht ausgerollt ({len(missing)}/{len(files)} fehlen: {names}) "
+                f"Not deployed yet ({len(missing)}/{len(files)} missing: {names}) "
                 f"- zuerst ./deploy.py deploy"
             )
             return True
@@ -1895,11 +1895,11 @@ class HostRunner:
         for it in self.items:
             name = it.extra.get("title", it.label)
             if it.status == "ok":
-                self.log.log("OK", f"{name}: Unveraendert")
+                self.log.log("OK", f"{name}: Unchanged")
             elif it.status == "exists":
-                self.log.log("OK", f"{name}: Vorhanden (bleibt bestehen)")
+                self.log.log("OK", f"{name}: Present (kept)")
             else:
-                w = {"create": "wuerde angelegt", "update": "wuerde aktualisiert", "meta": "wuerde Rechte anpassen", "remove": "wuerde entfernt"}.get(it.status, it.status)
+                w = {"create": "would be created", "update": "would be updated", "meta": "would adjust permissions", "remove": "would be removed"}.get(it.status, it.status)
                 self.log.log("DRY", f"{name}: {w}")
             if it.conflict:
                 pol = it.spec.get("on_conflict", "ask")
@@ -1917,9 +1917,9 @@ class HostRunner:
         for it in self.items:
             name = it.extra.get("title", it.label)
             if it.status == "ok":
-                self.log.log("OK", f"{name}: Entspricht Soll-Zustand")
+                self.log.log("OK", f"{name}: Matches target state")
             else:
-                self.log.log("WARN", f"{name}: Weicht ab (Status: {it.status})")
+                self.log.log("WARN", f"{name}: Drifts (status: {it.status})")
                 all_ok = False
                 drift += 1
         if drift:
@@ -1957,7 +1957,7 @@ class Decider:
             else:
                 it.decision = self.ask(r, it)
         if aborted:
-            raise ConfigError("Abbruch durch Konflikt-Richtlinie 'abort':\n  " + "\n  ".join(aborted))
+            raise ConfigError("Aborted by conflict policy 'abort':\n  " + "\n  ".join(aborted))
 
     def ask(self, r: HostRunner, it: Item) -> str:
         if it.cid in self.memo:
@@ -1965,14 +1965,14 @@ class Decider:
         if self.blanket:
             return self.blanket
         if not sys.stdin.isatty():
-            raise ConfigError(f"Konflikt auf {r.t.name} ({it.label}), aber kein TTY verfuegbar. Parameter --overwrite, --skip-conflicts oder -y verwenden.")
+            raise ConfigError(f"Conflict on {r.t.name} ({it.label}), but no TTY available. Use --overwrite, --skip-conflicts or -y.")
 
-        action = "ueberschreiben" if it.kind != "user" else "mitbenutzen"
+        action = "overwrite" if it.kind != "user" else "reuse"
         while True:
-            UI.emit(f"\n{UI.paint('ASK', 'KONFLIKT')} auf {r.t.name} ({it.conflict['kind']}):\n  Ziel: {it.label}\n  Info: {it.conflict['msg']}")
+            UI.emit(f"\n{UI.paint('ASK', 'CONFLICT')} on {r.t.name} ({it.conflict['kind']}):\n  Target: {it.label}\n  Info: {it.conflict['msg']}")
             ans = input(
                 f"  [y] {action}              [n] Ueberspringen\n"
-                f"  [Y] {action} auf ALLEN    [N] Ueberspringen auf ALLEN\n"
+                f"  [Y] {action} on ALL    [N] Skip on ALL\n"
                 f"  [d] Diff anzeigen         [q] Abbrechen > "
             ).strip()
             if ans == "y":
@@ -1986,10 +1986,10 @@ class Decider:
                 self.blanket = "skip"
                 return "skip"
             if ans == "d":
-                UI.emit(r.diff_text(it) if it.kind == "file" else "(Diff nur fuer Dateien verfuegbar)")
+                UI.emit(r.diff_text(it) if it.kind == "file" else "(diff only available for files)")
                 continue
             if ans == "q":
-                raise ConfigError("Deployment durch Benutzer abgebrochen.")
+                raise ConfigError("Deployment aborted by user.")
 
 def run_phase(cfg: Cfg, runners: list[HostRunner], fn, verbose: bool, keep_going: bool = False) -> None:
     jobs = int(cfg.S["JOBS"])
@@ -1998,7 +1998,7 @@ def run_phase(cfg: Cfg, runners: list[HostRunner], fn, verbose: bool, keep_going
 
     def work(r: HostRunner) -> None:
         if abort.is_set():
-            r.ok, r.err = False, "Uebersprungen wegen Fehlern auf anderem Host"
+            r.ok, r.err = False, "Skipped due to errors on another host"
             return
         t0 = time.time()
         r.err = ""
@@ -2010,7 +2010,7 @@ def run_phase(cfg: Cfg, runners: list[HostRunner], fn, verbose: bool, keep_going
             r.log.log("FAIL", r.err.split("\n")[0], "\n".join(r.err.split("\n")[1:]))
         except Exception as e:
             r.err = f"{type(e).__name__}: {e}"
-            r.log.log("FAIL", f"Unerwarteter Fehler: {r.err}", traceback.format_exc() if verbose else "")
+            r.log.log("FAIL", f"Unexpected error: {r.err}", traceback.format_exc() if verbose else "")
         r.seconds += time.time() - t0
         if not r.ok and not keep_going:
             abort.set()
@@ -2028,12 +2028,12 @@ def print_run_header(cfg: Cfg, verb: str) -> None:
     if not r:
         return
     ver = f" v{r.version}" if r.version else ""
-    UI.emit(f"{UI.paint('INFO', verb)}: Rezept {r.name}{ver} - {len(r.files)} Datei(en), "
-            f"{len(r.tests)} Test(s), {cfg.n_targets} Ziel(e)")
+    UI.emit(f"{UI.paint('INFO', verb)}: Recipe {r.name}{ver} - {len(r.files)} file(s), "
+            f"{len(r.tests)} test(s), {cfg.n_targets} target(s)")
 
 def print_summary_table(runners: list[HostRunner]) -> None:
     UI.emit("\n" + "=" * 90)
-    UI.emit(f"{'HOST':<28} {'DAUER':<8} {'STATUS':<8} {'TEST':<8} GEAENDERTE ELEMENTE / DETAILS")
+    UI.emit(f"{'HOST':<28} {'DURATION':<8} {'STATUS':<8} {'TEST':<8} CHANGED ELEMENTS / DETAILS")
     UI.emit("-" * 90)
     for r in runners:
         tag = "OK" if r.ok else "FAIL"
@@ -2048,7 +2048,7 @@ def print_summary_table(runners: list[HostRunner]) -> None:
         elif r.log.changed_items:
             details = UI.paint("CHG", ", ".join(r.log.changed_items))
         else:
-            details = "Keine Aenderungen (Soll = Ist)"
+            details = "No changes (target = actual)"
 
         UI.emit(
             f"{r.t.name:<28} {r.seconds:5.1f}s   [{UI.paint(tag, f'{tag:<4}')}] "
@@ -2064,7 +2064,7 @@ def deploy_flow(cfg: Cfg, runners: list[HostRunner], args: argparse.Namespace) -
     run_phase(cfg, runners, lambda r: r.analyze(), verbose)
     failed = [r for r in runners if not r.ok]
     if failed and not keep_going:
-        UI.emit("\nAbbruch: Vorab-Pruefung fehlgeschlagen. Es wurden keine Aenderungen durchgefuehrt.")
+        UI.emit("\nAborted: preflight check failed. No changes were made.")
         print_summary_table(runners)
         return 1
 
@@ -2083,7 +2083,7 @@ def find_profile(spec: str) -> Path:
     for c in cands:
         if c.is_file():
             return c.resolve()
-    raise ConfigError(f"Profil {spec!r} nicht gefunden (erwartet: profiles/<name>.env).")
+    raise ConfigError(f"Profile {spec!r} not found (expected: profiles/<name>.env).")
 
 def profile_dirs() -> list[Path]:
     dirs = [Path.cwd() / "profiles", SCRIPT_DIR / "profiles"]
@@ -2101,22 +2101,22 @@ def discover_profiles() -> dict[str, Path]:
 def list_profiles() -> int:
     profs = discover_profiles()
     if not profs:
-        UI.emit(UI.paint("WARN", "Keine Profile gefunden.") + " Erwartet: profiles/<name>.env")
+        UI.emit(UI.paint("WARN", "No profiles found.") + " Erwartet: profiles/<name>.env")
         return 1
     base = parse_dotenv(Path.cwd() / ".env") if (Path.cwd() / ".env").is_file() else {}
-    UI.emit(f"\n{'PROFIL':<20} {'REZEPT':<24} {'ZIELE':<7} ZUGANG")
+    UI.emit(f"\n{'PROFILE':<20} {'RECIPE':<24} {'TARGETS':<7} ACCESS")
     UI.emit("-" * 90)
     for name in sorted(profs):
         cfg = dict(base)
         cfg.update(parse_dotenv(profs[name], base))
         key = os.path.expanduser(cfg.get("SSH_KEY", "")) if cfg.get("SSH_KEY") else ""
-        zugang = f"{cfg.get('SSH_USER') or 'root'}@{cfg.get('SSH_PORT') or '22'}"
-        zugang += f", {Path(key).name}" if key else ", kein Key"
+        access = f"{cfg.get('SSH_USER') or 'root'}@{cfg.get('SSH_PORT') or '22'}"
+        access += f", {Path(key).name}" if key else ", no key"
         if key and not Path(key).is_file():
-            zugang += " (FEHLT)"
-        UI.emit(f"{name:<20} {cfg.get('RECIPE') or '-':<24} {len(split_words(cfg.get('TARGETS', ''))):<7} {zugang}")
+            access += " (MISSING)"
+        UI.emit(f"{name:<20} {cfg.get('RECIPE') or '-':<24} {len(split_words(cfg.get('TARGETS', ''))):<7} {access}")
     UI.emit("-" * 90)
-    UI.emit("Ausfuehren: ./deploy.py plan -p <profil>   |   ./deploy.py deploy -p <profil>")
+    UI.emit("Run: ./deploy.py plan -p <profile>   |   ./deploy.py deploy -p <profile>")
     return 0
 
 def discover_recipes() -> tuple[dict[str, tuple[Recipe, Path]], list[str]]:
@@ -2145,15 +2145,15 @@ def pick_profile(env_cfg: dict[str, str]) -> tuple[str, dict[str, str]]:
         return "", env_cfg
     names = sorted(profs)
     dflt = env_cfg.get("PROFILE", "")
-    UI.emit("\nProfil (Server, Zugang, Rezept):")
+    UI.emit("\nProfile (server, access, recipe):")
     for i, n in enumerate(names, 1):
         cfg = dict(env_cfg)
         cfg.update(parse_dotenv(profs[n], env_cfg))
-        mark = "  (Standard)" if n == dflt else ""
+        mark = "  (default)" if n == dflt else ""
         UI.emit(f"  [{i}] {n:<18} {cfg.get('RECIPE') or '-':<24} "
-                f"{len(split_words(cfg.get('TARGETS', '')))} Ziele{mark}")
+                f"{len(split_words(cfg.get('TARGETS', '')))} targets{mark}")
     d = str(names.index(dflt) + 1) if dflt in names else "1"
-    ans = input(f"\nWahl [1-{len(names)}, Standard: {d}]: ").strip() or d
+    ans = input(f"\nChoice [1-{len(names)}, default: {d}]: ").strip() or d
     if ans.isdigit() and 1 <= int(ans) <= len(names):
         name = names[int(ans) - 1]
     elif ans in profs:
@@ -2170,15 +2170,15 @@ def pick_recipe(default: str, recipes: dict[str, tuple[Recipe, Path]] | None = N
         recipes = discover_recipes()[0]
     names = sorted(recipes)
     if not names:
-        UI.emit(UI.paint("FAIL", "Keine Rezepte gefunden") + " - erwartet: recipes/<name>/recipe.toml")
+        UI.emit(UI.paint("FAIL", "No recipes found") + " - expected: recipes/<name>/recipe.toml")
         return default
-    UI.emit("\nRezepte:")
+    UI.emit("\nRecipes:")
     for i, n in enumerate(names, 1):
         rec = recipes[n][0]
-        mark = "  (Standard)" if n == default else ""
-        UI.emit(f"  [{i}] {n:<22} {rec.version or '-':<11} {len(rec.files)} Dateien  {rec.description or ''}{mark}")
+        mark = "  (default)" if n == default else ""
+        UI.emit(f"  [{i}] {n:<22} {rec.version or '-':<11} {len(rec.files)} files  {rec.description or ''}{mark}")
     dflt = str(names.index(default) + 1) if default in names else "1"
-    ans = input(f"Wahl [1-{len(names)}, Standard: {dflt}]: ").strip() or dflt
+    ans = input(f"Choice [1-{len(names)}, default: {dflt}]: ").strip() or dflt
     if ans.isdigit() and 1 <= int(ans) <= len(names):
         return names[int(ans) - 1]
     return ans if ans in recipes else names[int(dflt) - 1]
@@ -2186,19 +2186,19 @@ def pick_recipe(default: str, recipes: dict[str, tuple[Recipe, Path]] | None = N
 def list_recipes() -> int:
     found, errors = discover_recipes()
     if not found:
-        UI.emit(UI.paint("WARN", "Keine Rezepte gefunden.") + " Erwartet: recipes/<name>/recipe.toml")
+        UI.emit(UI.paint("WARN", "No recipes found.") + " Expected: recipes/<name>/recipe.toml")
     else:
-        UI.emit(f"\n{'REZEPT':<24} {'VERSION':<12} {'DATEIEN':<8} BESCHREIBUNG")
+        UI.emit(f"\n{'RECIPE':<24} {'VERSION':<12} {'FILES':<8} DESCRIPTION")
         UI.emit("-" * 100)
         for name in sorted(found):
             rec, path = found[name]
             UI.emit(f"{name:<24} {(rec.version or '-'):<12} {len(rec.files):<8} {rec.description or '-'}")
             UI.emit(f"{'':<24} {path}")
         UI.emit("-" * 100)
-        UI.emit("Ausfuehren: ./deploy.py deploy -r <rezept>  (Standard aus RECIPE in .env)")
+        UI.emit("Run: ./deploy.py deploy -r <recipe>  (default from RECIPE in .env)")
 
     for e in errors:
-        UI.emit(UI.paint("FAIL", "FEHLER") + f" {e}")
+        UI.emit(UI.paint("FAIL", "ERROR") + f" {e}")
     return 0 if found else 1
 
 def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
@@ -2215,19 +2215,19 @@ def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
     if env_path.is_file():
         targets = split_words(S.get("TARGETS", ""))
         key = os.path.expanduser(S["SSH_KEY"]) if S.get("SSH_KEY") else ""
-        detail = f"{len(targets)} Ziel(e), SSH-User {S.get('SSH_USER') or '?'}"
+        detail = f"{len(targets)} target(s), SSH user {S.get('SSH_USER') or '?'}"
         if S.get("RECIPE"):
-            detail += f", Standard-Rezept {S['RECIPE']}"
-        add(".env im Arbeitsverzeichnis", bool(targets), detail if targets else "TARGETS ist leer")
-        add("SSH-Key lesbar", bool(key) and Path(key).is_file(), key or "SSH_KEY ist leer")
+            detail += f", default recipe {S['RECIPE']}"
+        add(".env in working directory", bool(targets), detail if targets else "TARGETS is empty")
+        add("SSH key readable", bool(key) and Path(key).is_file(), key or "SSH_KEY is empty")
     else:
-        add(".env im Arbeitsverzeichnis", False, f"{env_path} fehlt")
+        add(".env in working directory", False, f"{env_path} missing")
 
     recipes, errors = discover_recipes()
     for e in errors:
-        add("Rezept ladbar", False, e)
-    add("Rezepte gefunden", bool(recipes),
-        ", ".join(sorted(recipes)) or "erwartet: recipes/<name>/recipe.toml")
+        add("Recipe loadable", False, e)
+    add("Recipes found", bool(recipes),
+        ", ".join(sorted(recipes)) or "expected: recipes/<name>/recipe.toml")
 
     for name in sorted(recipes):
         rec, path = recipes[name]
@@ -2240,12 +2240,12 @@ def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
             )
             items = runner.build_items()
             files = [i for i in items if i.kind == "file"]
-            detail = f"{len(files)} Datei(en), {len(rec.tests)} Test(s) - {path}"
+            detail = f"{len(files)} file(s), {len(rec.tests)} test(s) - {path}"
             for i in files:
                 detail += f"\n{i.label}  {i.mode} {i.owner}:{i.group}  {len(i.data)} B  sha={i.sha[:12]}"
-            add(f"Rezept {name} (Platzhalter, Quellen, Rechte)", True, detail)
+            add(f"Recipe {name} (placeholders, sources, permissions)", True, detail)
         except Exception as e:
-            add(f"Rezept {name} (Platzhalter, Quellen, Rechte)", False, str(e))
+            add(f"Recipe {name} (placeholders, sources, permissions)", False, str(e))
 
     profs = discover_profiles()
     if profs:
@@ -2255,17 +2255,17 @@ def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
                 pcfg.update(parse_dotenv(profs[pname], S))
                 prec = pcfg.get("RECIPE", "")
                 if prec and prec not in recipes:
-                    raise ConfigError(f"Rezept {prec!r} fehlt (./deploy.py recipes)")
+                    raise ConfigError(f"Recipe {prec!r} missing (./deploy.py recipes)")
                 n = len(split_words(pcfg.get("TARGETS", "")))
-                add(f"Profil {pname}", bool(n) and bool(prec), f"{prec or '-'} - {n} Ziel(e) - {profs[pname]}")
+                add(f"Profile {pname}", bool(n) and bool(prec), f"{prec or '-'} - {n} target(s) - {profs[pname]}")
             except Exception as e:
-                add(f"Profil {pname}", False, str(e))
+                add(f"Profile {pname}", False, str(e))
 
     if S.get("RECIPE") and S["RECIPE"] not in recipes:
-        add(f"Standard-Rezept {S['RECIPE']}", False, "nicht gefunden - siehe ./deploy.py recipes")
+        add(f"Default recipe {S['RECIPE']}", False, "not found - see ./deploy.py recipes")
 
     if not do_ssh:
-        rows.append(("SSH-Erreichbarkeit", "SKIP", "uebersprungen (mit --ssh pruefen)"))
+        rows.append(("SSH reachability", "SKIP", "skipped (check with --ssh)"))
     else:
         inv_path = Path(os.path.expanduser(S["INVENTORY"])) if S.get("INVENTORY") else (
             Path.cwd() / "inventory.toml" if (Path.cwd() / "inventory.toml").is_file() else None)
@@ -2283,7 +2283,7 @@ def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
                                     argparse.Namespace(no_test=False, force=False, diff=False))
                 try:
                     runner.connect()
-                    add(f"SSH {t.name}", True, f"erreichbar als {t.user or S.get('SSH_USER')}")
+                    add(f"SSH {t.name}", True, f"reachable as {t.user or S.get('SSH_USER')}")
                 except Exception as e:
                     add(f"SSH {t.name}", False, str(e).splitlines()[0])
                 finally:
@@ -2298,86 +2298,86 @@ def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
             if line:
                 UI.emit(f"       | {line}")
     good = state["ok"]
-    UI.emit("\n" + (UI.paint("PASS", "Selbstpruefung bestanden.") if good
-                    else UI.paint("FAIL", "Selbstpruefung fehlgeschlagen.")))
+    UI.emit("\n" + (UI.paint("PASS", "Self-test passed.") if good
+                    else UI.paint("FAIL", "Self-test failed.")))
     return 0 if good else 1
 
 def print_help_env():
     help_text = """
-=== deploy.py: Vollstaendige .env Konfigurations-Referenz ===
+=== deploy.py: Complete .env configuration reference ===
 
-[REZEPTE]
-  RECIPE                Standard-Rezept fuer deploy/plan/status/test
-                        (z. B. 'site-rescue-audit'). Rezepte liegen als
-                        recipes/<name>/recipe.toml neben deploy.py.
-                        Uebersicht: ./deploy.py recipes
-  Hinweis               'push' ist kein eigener Mechanismus, sondern ein zur Laufzeit
-                        erzeugtes Ein-Datei-Rezept aus den PAYLOAD-Werten unten. Es
-                        laeuft durch dieselbe Pruef-, Sicherungs- und Rollback-Logik
-                        und ist nur fuer ad-hoc einzelne Dateien gedacht.
+[RECIPES]
+  RECIPE                Default recipe for deploy/plan/status/test
+                        (e.g. 'site-rescue-audit'). Recipes live as
+                        recipes/<name>/recipe.toml next to deploy.py.
+                        Overview: ./deploy.py recipes
+  Note                  'push' is not a separate mechanism but a single-file
+                        recipe generated at runtime from the PAYLOAD values below. It
+                        runs through the same validation, backup and rollback logic
+                        and is intended only for ad-hoc single files.
 
-[VERBINDUNG]
-  TARGETS               Zielserver (Kommasepariert, z. B. 'web1.example.com,web2.example.com')
-  SSH_USER              Admin-Benutzer fuer Ausrollung (Standard: 'root')
-  SSH_KEY               Lokaler Private-Key fuer Admin-Login (Standard: '~/.ssh/id_ed25519')
-  SSH_PORT              SSH-Port (Standard: '22')
-  JOBS                  Parallele Verbindungen (Standard: '4'; '1' = nacheinander)
+[CONNECTION]
+  TARGETS               Target servers (comma-separated, e.g. 'web1.example.com,web2.example.com')
+  SSH_USER              Admin user for deployment (default: 'root')
+  SSH_KEY               Local private key for admin login (default: '~/.ssh/id_ed25519')
+  SSH_PORT              SSH port (default: '22')
+  JOBS                  Parallel connections (default: '4'; '1' = one after another)
 
-[EINZELDATEI (push)]
-  push ist ein normales Rezept (recipes/push). Seine Werte kommen aus der
-  Kommandozeile, nicht aus .env: ./deploy.py push <datei> --dest <pfad>
-  Zusaetze: --mode --owner --group --system-user --sudoers --sudoers-name
+[SINGLE FILE (push)]
+  push is a normal recipe (recipes/push). Its values come from the
+  command line, not from .env: ./deploy.py push <file> --dest <path>
+  Extras: --mode --owner --group --system-user --sudoers --sudoers-name
             --authorized-keys --whitelist-ip --test
-  Fuer alles Weitere ein eigenes Rezept unter recipes/<name>/ anlegen.
+  For everything else, create your own recipe under recipes/<name>/.
 
-[BENUTZER]
-  SYSTEM_USER           Systembenutzer, der angelegt/genutzt wird (z. B. 'rescue')
-  SYSTEM_USER_GROUPS    Sekundaere Gruppen (Standard: 'sshallow' fuer OpenSSH-Zugang)
-  SYSTEM_USER_SHELL     Shell des Benutzers (Standard: '/bin/bash')
-  ALLOW_EXISTING_USER   '1' = Vorhandenen Benutzer ohne Bestaetigungs-Prompt mitbenutzen
+[USERS]
+  SYSTEM_USER           System user that is created/used (e.g. 'rescue')
+  SYSTEM_USER_GROUPS    Secondary groups (default: 'sshallow' for OpenSSH access)
+  SYSTEM_USER_SHELL     Shell of the user (default: '/bin/bash')
+  ALLOW_EXISTING_USER   '1' = reuse an existing user without a confirmation prompt
 
-[RECHTE & SUDOERS]
-  SUDOERS_NAME          Dateiname in /etc/sudoers.d/ (keine Punkte!, z. B. 'site-rescue')
-  SUDOERS_CONTENT       Sudoers-Regel (wird vor Aktivierung zwingend mit visudo -cf validiert)
+[PERMISSIONS & SUDOERS]
+  SUDOERS_NAME          File name in /etc/sudoers.d/ (no dots!, e.g. 'site-rescue')
+  SUDOERS_CONTENT       Sudoers rule (always validated with visudo -cf before activation)
 
-[SSH-ZUGANG & KEYS]
-  AUTHORIZED_KEYS       Schluessel fuer ~/.ssh/authorized_keys des SYSTEM_USER.
-                        Unterstuetzt OpenSSH-Optionen und inline 'file:~/.ssh/key.pub'!
-  WHITELIST_IP          IP-Adresse oder Range fuer Fail2ban / Firewall-Whitelist
+[SSH ACCESS & KEYS]
+  AUTHORIZED_KEYS       Keys for ~/.ssh/authorized_keys of SYSTEM_USER.
+                        Supports OpenSSH options and inline 'file:~/.ssh/key.pub'!
+  WHITELIST_IP          IP address or range for the Fail2ban / firewall whitelist
 
 [POST-DEPLOY TESTS]
-  TEST_COMMAND          Befehl fuer E2E-Funktionstest (z. B. 'diag example.com')
-  TEST_USER             SSH-Benutzer fuer den Test (z. B. 'rescue')
-  TEST_KEY              Lokaler Private-Key fuer den Test (z. B. '~/.ssh/id_ed25519')
-  TEST_EXPECT           Erwartetes Regex-Muster in stdout des Tests
-  TEST_HOST             Filter: Fuehrt den Test NUR auf diesem Host aus (z. B. 'web1.example.com')
+  TEST_COMMAND          Command for the E2E functional test (e.g. 'diag example.com')
+  TEST_USER             SSH user for the test (e.g. 'rescue')
+  TEST_KEY              Local private key for the test (e.g. '~/.ssh/id_ed25519')
+  TEST_EXPECT           Expected regex pattern in the test's stdout
+  TEST_HOST             Filter: runs the test ONLY on this host (e.g. 'web1.example.com')
 
-[KONFLIKT-BEHANDLUNG]
-  ON_CONFLICT           Verhalten bei abweichenden Dateien: ask (Standard), overwrite, skip, abort
-  ROLLBACK_ON_FAIL      '1' = Automatischer Rollback, wenn der Test nach Deploy fehlschlaegt
+[CONFLICT HANDLING]
+  ON_CONFLICT           Behaviour for divergent files: ask (default), overwrite, skip, abort
+  ROLLBACK_ON_FAIL      '1' = automatic rollback if the test fails after deploy
 """
     print(help_text.strip())
 
 def interactive_wizard() -> list[str]:
     UI.emit("\n" + "=" * 60)
-    UI.emit(f"=== {UI.paint('INFO', 'deploy.py v' + VERSION + ' - Interaktiver Setup-Wizard')} ===")
+    UI.emit(f"=== {UI.paint('INFO', 'deploy.py v' + VERSION + ' - Interactive setup wizard')} ===")
     UI.emit("=" * 60)
 
     cwd_env = Path.cwd() / ".env"
     env_cfg = parse_dotenv(cwd_env) if cwd_env.is_file() else {}
 
-    UI.emit("\nWas moechtest du tun?")
-    UI.emit("  [1] Probelauf ohne Aenderungen (plan)")
-    UI.emit("  [2] Rezept ausrollen (deploy)")
-    UI.emit("  [3] Soll-Zustand pruefen (status)")
-    UI.emit("  [4] Tests ausfuehren (test)")
-    UI.emit("  [5] Einzelne Datei ausrollen (push)")
-    UI.emit("  [6] Befehl remote ausfuehren (run)")
-    UI.emit("  [7] Selbstpruefung + Rezeptliste (selftest)")
-    UI.emit("  [8] .env Referenz anzeigen (help-env)")
-    UI.emit("  [q] Beenden")
+    UI.emit("\nWhat do you want to do?")
+    UI.emit("  [1] Dry run without changes (plan)")
+    UI.emit("  [2] Roll out a recipe (deploy)")
+    UI.emit("  [3] Check target state (status)")
+    UI.emit("  [4] Run tests (test)")
+    UI.emit("  [5] Roll out a single file (push)")
+    UI.emit("  [6] Run a command remotely (run)")
+    UI.emit("  [7] Self-test + recipe list (selftest)")
+    UI.emit("  [8] Show the .env reference (help-env)")
+    UI.emit("  [q] Quit")
 
-    choice = input("\nWahl [1-8, Standard: 1]: ").strip() or "1"
+    choice = input("\nChoice [1-8, default: 1]: ").strip() or "1"
     if choice == "q":
         sys.exit(0)
     if choice == "8":
@@ -2390,24 +2390,24 @@ def interactive_wizard() -> list[str]:
 
     if cmd == "selftest":
         cli_args = ["selftest"]
-        if input("\nSSH-Erreichbarkeit mitpruefen (nur lesend)? [y/N]: ").strip().lower() == "y":
+        if input("\nAlso check SSH reachability (read-only)? [y/N]: ").strip().lower() == "y":
             cli_args.append("--ssh")
         return cli_args
 
     profile, env_cfg = pick_profile(env_cfg)
 
     dflt_targets = env_cfg.get("TARGETS", "")
-    targets = input(f"\nZielserver ({f'Standard: {dflt_targets}' if dflt_targets else 'z. B. srv1,srv2'}): ").strip() or dflt_targets
+    targets = input(f"\nTarget servers ({f'default: {dflt_targets}' if dflt_targets else 'e.g. srv1,srv2'}): ").strip() or dflt_targets
     if not targets:
-        sys.exit("Fehler: Keine Zielserver angegeben.")
+        sys.exit("Error: no target servers given.")
 
     cli_args = [cmd, "-t", targets]
     if profile:
         cli_args += ["-p", profile]
 
-    jobs = input("\nParallele Verbindungen [Standard: 4]: ").strip() or "4"
+    jobs = input("\nParallel connections [default: 4]: ").strip() or "4"
     if not jobs.isdigit() or int(jobs) < 1:
-        UI.emit("  Ungueltig - nehme 4.")
+        UI.emit("  Invalid - using 4.")
         jobs = "4"
     cli_args += ["-j", jobs]
 
@@ -2417,52 +2417,52 @@ def interactive_wizard() -> list[str]:
             cli_args += ["-r", name]
             rec = discover_recipes()[0].get(name)
             if rec:
-                UI.emit(f"\nRezept {UI.paint('INFO', name)}: {rec[0].description or '-'} "
-                        f"({len(rec[0].files)} Dateien, {len(rec[0].tests)} Tests)")
+                UI.emit(f"\nRecipe {UI.paint('INFO', name)}: {rec[0].description or '-'} "
+                        f"({len(rec[0].files)} files, {len(rec[0].tests)} tests)")
         if cmd == "deploy":
-            if input("\nProbelauf vorher anzeigen? [Y/n]: ").strip().lower() != "n":
-                diff = input("  Diffs der Aenderungen anzeigen? [y/N]: ").strip().lower() == "y"
+            if input("\nShow a dry run first? [Y/n]: ").strip().lower() != "n":
+                diff = input("  Show diffs of the changes? [y/N]: ").strip().lower() == "y"
                 plan_args = (["plan", "-t", targets, "-p", profile] if profile
                              else ["plan", "-r", name, "-t", targets]) + (["--diff"] if diff else [])
-                UI.emit(f"\n{UI.paint('INFO', 'Probelauf')}: ./deploy.py " + " ".join(shlex.quote(a) for a in plan_args))
+                UI.emit(f"\n{UI.paint('INFO', 'Dry run')}: ./deploy.py " + " ".join(shlex.quote(a) for a in plan_args))
                 main(plan_args)
-                if input("\nJetzt ausrollen? [Y/n]: ").strip().lower() == "n":
+                if input("\nRoll out now? [Y/n]: ").strip().lower() == "n":
                     sys.exit(0)
-            if "," in targets and input("Bei Fehlern auf anderen Hosts weitermachen? [Y/n]: ").strip().lower() != "n":
+            if "," in targets and input("Continue on errors on other hosts? [Y/n]: ").strip().lower() != "n":
                 cli_args.append("--keep-going")
-            if input("Auch unveraenderte Dateien neu schreiben (--force)? [y/N]: ").strip().lower() == "y":
+            if input("Rewrite unchanged files too (--force)? [y/N]: ").strip().lower() == "y":
                 cli_args.append("--force")
 
     if cmd == "push":
         dflt_src = env_cfg.get("PUSH_SRC", "./scripts/example.sh")
-        src = input(f"Lokale Datei/Skript [Standard: {dflt_src}]: ").strip() or dflt_src
+        src = input(f"Local file/script [default: {dflt_src}]: ").strip() or dflt_src
         cli_args.append(src)
 
         dflt_dest = env_cfg.get("PUSH_DEST", f"/usr/local/bin/{Path(src).name}")
-        dest = input(f"Zielpfad auf Server [Standard: {dflt_dest}]: ").strip() or dflt_dest
+        dest = input(f"Target path on server [default: {dflt_dest}]: ").strip() or dflt_dest
         cli_args += ["--dest", dest]
 
-        do_overwrite = input("Bestehende Dateien ueberschreiben? [Y/n]: ").strip().lower() != "n"
+        do_overwrite = input("Overwrite existing files? [Y/n]: ").strip().lower() != "n"
         if do_overwrite:
             cli_args.append("--overwrite")
 
-        skip_test = input("Tests ueberspringen? [y/N]: ").strip().lower() == "y"
+        skip_test = input("Skip tests? [y/N]: ").strip().lower() == "y"
         if skip_test:
             cli_args.append("--no-test")
 
     elif cmd == "plan":
-        show_diff = input("Diffs geaenderter Dateien anzeigen? [y/N]: ").strip().lower() == "y"
+        show_diff = input("Show diffs of changed files? [y/N]: ").strip().lower() == "y"
         if show_diff:
             cli_args.append("--diff")
 
     elif cmd == "run":
-        remote_cmd = input("Befehl, der remote ausgefuehrt werden soll: ").strip()
+        remote_cmd = input("Command to run remotely: ").strip()
         if not remote_cmd:
-            sys.exit("Fehler: Kein Befehl angegeben.")
+            sys.exit("Error: no command given.")
         cli_args += ["--", remote_cmd]
 
-    UI.emit(f"\nGenerierter Aufruf: {UI.paint('PASS', './deploy.py ' + ' '.join(shlex.quote(a) for a in cli_args))}")
-    if cmd != "deploy" and input("Jetzt ausfuehren? [Y/n]: ").strip().lower() == "n":
+    UI.emit(f"\nGenerated call: {UI.paint('PASS', './deploy.py ' + ' '.join(shlex.quote(a) for a in cli_args))}")
+    if cmd != "deploy" and input("Run now? [Y/n]: ").strip().lower() == "n":
         sys.exit(0)
 
     return cli_args
@@ -2515,123 +2515,123 @@ complete -F _deploy_py deploy.py ./deploy.py
         tag = "# deploy.py autocompletion"
         content = target_rc.read_text(encoding="utf-8") if target_rc.is_file() else ""
         if tag in content:
-            UI.emit(f"Autovervollstaendigung ist in {target_rc} bereits registriert.")
+            UI.emit(f"Autocompletion is already registered in {target_rc}.")
             return
 
         with open(target_rc, "a", encoding="utf-8") as f:
             f.write(f"\n{tag}\n{bash_code}\n")
-        UI.emit(f"{UI.paint('PASS', 'Erfolgreich installiert in ' + str(target_rc))}")
-        UI.emit("Fuer sofortige Aktivierung im Terminal ausfuehren:")
+        UI.emit(f"{UI.paint('PASS', 'Successfully installed in ' + str(target_rc))}")
+        UI.emit("To activate it immediately in the terminal, run:")
         UI.emit(f"  source {target_rc}")
     else:
         print(bash_code)
 
 def make_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
     common = argparse.ArgumentParser(add_help=False)
-    g = common.add_argument_group("Ziele & Verbindung")
+    g = common.add_argument_group("Targets & connection")
     S_ = argparse.SUPPRESS
-    g.add_argument("-t", "--targets", default=S_, help="Zielserver (kommasepariert, IP, User@Host:Port oder @gruppe)")
-    g.add_argument("-i", "--inventory", default=S_, help="TOML-Inventardatei")
-    g.add_argument("-u", "--user", default=S_, help="SSH-Admin-User (Standard: root)")
-    g.add_argument("-P", "--port", default=S_, help="SSH-Port")
-    g.add_argument("-k", "--key", default=S_, help="SSH-Private-Key fuer Admin-Login")
-    g.add_argument("-j", "--jobs", default=S_, help="Parallele Verbindungen (Standard: 4, 1 = nacheinander)")
-    g.add_argument("-e", "--env", action="append", default=S_, help="Zusaetzliche .env-Datei")
+    g.add_argument("-t", "--targets", default=S_, help="Target servers (comma-separated, IP, user@host:port or @group)")
+    g.add_argument("-i", "--inventory", default=S_, help="TOML inventory file")
+    g.add_argument("-u", "--user", default=S_, help="SSH admin user (default: root)")
+    g.add_argument("-P", "--port", default=S_, help="SSH port")
+    g.add_argument("-k", "--key", default=S_, help="SSH private key for admin login")
+    g.add_argument("-j", "--jobs", default=S_, help="Parallel connections (default: 4, 1 = one after another)")
+    g.add_argument("-e", "--env", action="append", default=S_, help="Additional .env file")
     g.add_argument("-p", "--profile", default=S_,
-                   help="Profil aus profiles/<name>.env (Server, Zugang, Rezept, Werte)")
-    g.add_argument("-s", "--set", action="append", default=S_, metavar="K=V", help="Variable setzen")
-    g.add_argument("-y", "--yes", action="store_true", default=S_, help="Bestaetigungen ueberspringen")
-    g.add_argument("--overwrite", action="store_true", default=S_, help="Bestehende Fremddateien ueberschreiben")
-    g.add_argument("--skip-conflicts", action="store_true", default=S_, help="Konflikte automatisch ueberspringen")
-    g.add_argument("--rollback-on-fail", action="store_true", default=S_, help="Automatischer Rollback wenn Tests fehlschlagen")
-    g.add_argument("--keep-going", action="store_true", default=S_, help="Bei Fehlern auf anderen Hosts weitermachen")
-    g.add_argument("-v", "--verbose", action="store_true", default=S_, help="Ausfuehrliche Log-Ausgabe")
+                   help="Profile from profiles/<name>.env (servers, access, recipe, values)")
+    g.add_argument("-s", "--set", action="append", default=S_, metavar="K=V", help="Set a variable")
+    g.add_argument("-y", "--yes", action="store_true", default=S_, help="Skip confirmations")
+    g.add_argument("--overwrite", action="store_true", default=S_, help="Overwrite existing foreign files")
+    g.add_argument("--skip-conflicts", action="store_true", default=S_, help="Skip conflicts automatically")
+    g.add_argument("--rollback-on-fail", action="store_true", default=S_, help="Automatic rollback if tests fail")
+    g.add_argument("--keep-going", action="store_true", default=S_, help="Continue on errors on other hosts")
+    g.add_argument("-v", "--verbose", action="store_true", default=S_, help="Verbose log output")
 
     ap = argparse.ArgumentParser(
         prog="deploy.py",
-        description=f"deploy.py v{VERSION} - Universelles Server-Deployment-Werkzeug",
-        epilog="Hilfe: ./deploy.py help <befehl> - Rezeptuebersicht: ./deploy.py recipes"
+        description=f"deploy.py v{VERSION} - Universal server deployment tool",
+        epilog="Help: ./deploy.py help <command> - recipe overview: ./deploy.py recipes"
     )
     ap.add_argument("--version", action="version", version=f"deploy.py {VERSION}")
     sub = ap.add_subparsers(dest="cmd", required=False)
 
     subparsers = {}
 
-    subparsers["help-env"] = sub.add_parser("help-env", help="Vollstaendige Dokumentation aller .env Variablen anzeigen")
-    subparsers["wizard"] = sub.add_parser("wizard", help="Interaktiver CLI-Setup-Assistent")
+    subparsers["help-env"] = sub.add_parser("help-env", help="Show full documentation of all .env variables")
+    subparsers["wizard"] = sub.add_parser("wizard", help="Interactive CLI setup wizard")
 
-    comp_parser = sub.add_parser("completion", help="Bash/Zsh Autovervollstaendigung anzeigen oder installieren")
+    comp_parser = sub.add_parser("completion", help="Show or install Bash/Zsh autocompletion")
     comp_parser.add_argument("--shell", choices=["bash", "zsh"], default="bash")
-    comp_parser.add_argument("--install", action="store_true", help="Direkt in ~/.bashrc bzw. ~/.zshrc eintragen")
+    comp_parser.add_argument("--install", action="store_true", help="Write directly into ~/.bashrc or ~/.zshrc")
     subparsers["completion"] = comp_parser
 
     subparsers["recipes"] = sub.add_parser(
         "recipes",
-        help="Verfuegbare Rezepte auflisten",
-        description="Zeigt alle Rezepte aus ./recipes, $DEPLOY_RECIPE_PATH und dem Verzeichnis von deploy.py."
+        help="List available recipes",
+        description="Shows all recipes from ./recipes, $DEPLOY_RECIPE_PATH and the directory of deploy.py."
     )
 
     subparsers["profiles"] = sub.add_parser(
         "profiles",
-        help="Profile auflisten (Server, Rezept, Zugang)",
-        description="Zeigt alle Profile aus ./profiles, $DEPLOY_PROFILE_PATH und dem Verzeichnis von deploy.py."
+        help="List profiles (server, recipe, access)",
+        description="Shows all profiles from ./profiles, $DEPLOY_PROFILE_PATH and the directory of deploy.py."
     )
 
     selftest_parser = sub.add_parser(
         "selftest",
-        help="Lokale Selbstpruefung ohne Aenderungen",
-        description="Prueft .env, SSH-Key, alle Rezepte (Quellen, Rechte, Platzhalter) und optional die SSH-Erreichbarkeit."
+        help="Local self-test without changes",
+        description="Checks .env, the SSH key, all recipes (sources, permissions, placeholders) and optionally SSH reachability."
     )
     selftest_parser.add_argument("--ssh", action="store_true", default=False,
-                                 help="Zusaetzlich alle Ziele verbinden (nur lesend)")
+                                 help="Also connect to all targets (read-only)")
     subparsers["selftest"] = selftest_parser
 
     pu = sub.add_parser(
         "push", parents=[common],
-        help="Einzelnes Skript/Datei deployen",
-        description="Laedt eine Datei oder Skript atomar auf die Server hoch, erstellt User, Sudoers und SSH-Keys.",
+        help="Deploy a single script/file",
+        description="Uploads a file or script atomically to the servers, creates users, sudoers and SSH keys.",
         epilog="Beispiel: ./deploy.py push ./site-rescue --dest /usr/local/bin/site-rescue -t web1.example.com --overwrite"
     )
-    pu.add_argument("file", nargs="?", default=None, help="Lokaler Pfad zum Skript")
-    pu.add_argument("--dest", default=None, help="Zielpfad auf Server (z. B. /usr/local/bin/skript)")
-    pu.add_argument("--mode", default=None, help="Oktale Dateirechte (Standard: 0755)")
-    pu.add_argument("--owner", default=None, help="Dateieigentuemer auf Server (Standard: root)")
-    pu.add_argument("--group", default=None, help="Dateigruppe auf Server (Standard: root)")
-    pu.add_argument("--system-user", default=None, help="Systembenutzer erstellen/zuordnen")
-    pu.add_argument("--sudoers", default=None, help="Sudoers-Regeltext (wird per visudo validiert)")
-    pu.add_argument("--sudoers-name", default=None, help="Dateiname in /etc/sudoers.d/")
-    pu.add_argument("--authorized-keys", default=None, help="SSH-Keys fuer Systembenutzer (direkt oder file:...)")
-    pu.add_argument("--whitelist-ip", default=None, help="IP fuer Fail2ban-Whitelist")
-    pu.add_argument("--test", action="append", default=None, help="Post-Deploy Testbefehl")
-    pu.add_argument("--test-user", default=None, help="SSH-User fuer Test")
-    pu.add_argument("--test-key", default=None, help="SSH-Key fuer Test")
-    pu.add_argument("--no-test", action="store_true", default=False, help="Tests ueberspringen")
+    pu.add_argument("file", nargs="?", default=None, help="Local path to the script")
+    pu.add_argument("--dest", default=None, help="Target path on the server (e.g. /usr/local/bin/script)")
+    pu.add_argument("--mode", default=None, help="Octal file permissions (default: 0755)")
+    pu.add_argument("--owner", default=None, help="File owner on the server (default: root)")
+    pu.add_argument("--group", default=None, help="File group on the server (default: root)")
+    pu.add_argument("--system-user", default=None, help="Create/assign a system user")
+    pu.add_argument("--sudoers", default=None, help="Sudoers rule text (validated with visudo)")
+    pu.add_argument("--sudoers-name", default=None, help="File name in /etc/sudoers.d/")
+    pu.add_argument("--authorized-keys", default=None, help="SSH keys for the system user (direct or file:...)")
+    pu.add_argument("--whitelist-ip", default=None, help="IP for the Fail2ban whitelist")
+    pu.add_argument("--test", action="append", default=None, help="Post-deploy test command")
+    pu.add_argument("--test-user", default=None, help="SSH user for the test")
+    pu.add_argument("--test-key", default=None, help="SSH key for the test")
+    pu.add_argument("--no-test", action="store_true", default=False, help="Skip tests")
     subparsers["push"] = pu
 
-    d = sub.add_parser("deploy", parents=[common], help="Rezept ausfuehren (recipe.toml)")
-    d.add_argument("-r", "--recipe", default=S_, help="Rezeptname oder Pfad zu recipe.toml")
+    d = sub.add_parser("deploy", parents=[common], help="Run a recipe (recipe.toml)")
+    d.add_argument("-r", "--recipe", default=S_, help="Recipe name or path to recipe.toml")
     d.add_argument("--no-test", action="store_true", default=False)
     d.add_argument("--force", action="store_true", default=False,
-                   help="Auch unveraenderte Dateien neu schreiben (uebernimmt die Registrierung vom alten Rezept)")
+                   help="Rewrite unchanged files too (takes over the registration from the old recipe)")
     subparsers["deploy"] = d
 
-    pl = sub.add_parser("plan", parents=[common], help="Dry-Run (zeigt geplante Aenderungen ohne Modifikation)")
+    pl = sub.add_parser("plan", parents=[common], help="Dry run (shows planned changes without modifying anything)")
     pl.add_argument("-r", "--recipe", default=S_)
-    pl.add_argument("--diff", action="store_true", default=False, help="Diffs geaenderter Dateien anzeigen")
+    pl.add_argument("--diff", action="store_true", default=False, help="Show diffs of changed files")
     subparsers["plan"] = pl
 
-    st = sub.add_parser("status", parents=[common], help="Drift-Pruefung gegen Soll-Zustand")
+    st = sub.add_parser("status", parents=[common], help="Drift check against the target state")
     st.add_argument("-r", "--recipe", default=S_)
     subparsers["status"] = st
 
-    te = sub.add_parser("test", parents=[common], help="Nur Tests ausfuehren")
+    te = sub.add_parser("test", parents=[common], help="Run tests only")
     te.add_argument("-r", "--recipe", default=S_)
     subparsers["test"] = te
 
-    ru = sub.add_parser("run", parents=[common], help="Befehl oder Skript remote ausfuehren")
-    ru.add_argument("--script", default=None, help="Lokale Skriptdatei uebergeben")
+    ru = sub.add_parser("run", parents=[common], help="Run a command or script remotely")
+    ru.add_argument("--script", default=None, help="Pass a local script file")
     ru.add_argument("--no-sudo", action="store_true", default=False)
-    ru.add_argument("command", nargs=argparse.REMAINDER, help="Befehl nach --")
+    ru.add_argument("command", nargs=argparse.REMAINDER, help="Command after --")
     subparsers["run"] = ru
 
     return ap, subparsers
@@ -2723,13 +2723,13 @@ def main(argv: list[str] | None = None) -> int:
         rec_spec = getattr(args, "recipe", None) or S["RECIPE"]
         recipe = load_recipe(find_recipe(rec_spec))
     elif args.cmd not in ("run", "wizard", "help-env", "completion"):
-        sys.exit("Fehler: Weder Rezept (-r) noch DEPLOY_SRC in .env angegeben.")
+        sys.exit("Error: neither a recipe (-r) nor DEPLOY_SRC in .env given.")
 
     inv_path = Path(os.path.expanduser(S["INVENTORY"])) if S["INVENTORY"] else (Path.cwd() / "inventory.toml" if (Path.cwd() / "inventory.toml").is_file() else None)
     inv = load_inventory(inv_path)
 
     if not S["TARGETS"]:
-        sys.exit("Fehler: Keine Zielserver definiert (-t oder TARGETS in .env).")
+        sys.exit("Error: no target servers defined (-t or TARGETS in .env).")
 
     targets = resolve_targets(S["TARGETS"], S, inv)
     cfg = Cfg(
@@ -2742,9 +2742,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         jobs = int(S["JOBS"])
     except (TypeError, ValueError):
-        raise ConfigError(f"JOBS {S['JOBS']!r} ist keine Zahl")
+        raise ConfigError(f"JOBS {S['JOBS']!r} is not a number")
     if jobs < 1:
-        raise ConfigError("JOBS muss mindestens 1 sein (-j 1 = nacheinander, -j 4 = Standard)")
+        raise ConfigError("JOBS must be at least 1 (-j 1 = one after another, -j 4 = default)")
     S["JOBS"] = str(jobs)
     live = jobs == 1
     verbose = bool(getattr(args, "verbose", False))
@@ -2808,7 +2808,7 @@ if __name__ == "__main__":
     try:
         rc = main()
     except ConfigError as e:
-        print(f"Fehler: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         rc = 2
     except KeyboardInterrupt:
         print("\nAbgebrochen.", file=sys.stderr)

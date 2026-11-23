@@ -1,17 +1,17 @@
-# Rezept push: genau eine Datei.
+# Recipe push: exactly one file.
 #
-# Wird von ./deploy.py push mit Werten gefuellt - die Datei selbst bleibt
-# datenlos. Direkt aufrufbar ist es auch:
+# Filled with values by ./deploy.py push - the file itself stays data-free.
+# It can also be called directly:
 #   ./deploy.py plan   -r push -s PUSH_SRC=./scripts/example.sh -s PUSH_DEST=/tmp/x
 #   ./deploy.py deploy -r push -s PUSH_SRC=./foo.sh --dest ...
 #
-# Alle PUSH_*-Variablen kommen aus der Kommandozeile (-s bzw. die push-Flags),
-# nicht aus .env oder dem Profil.
+# All PUSH_* variables come from the command line (-s or the push flags), not
+# from .env or the profile.
 
 [recipe]
 name = "push"
 version = "1"
-description = "Einzelne Datei ausrollen (Werte von ./deploy.py push)"
+description = "Deploy a single file (values from ./deploy.py push)"
 
 [vars.PUSH_SRC]
 default = "./scripts/example.sh"
@@ -59,7 +59,7 @@ mode = "{{PUSH_MODE}}"
 owner = "{{PUSH_OWNER}}"
 group = "{{PUSH_GROUP}}"
 validate = "{{PUSH_VALIDATE}}"
-description = "Einzeldatei"
+description = "Single file"
 
 [[files]]
 if_var = "PUSH_SUDOERS"
@@ -69,7 +69,7 @@ mode = "0440"
 owner = "root"
 group = "root"
 validate = "visudo -cf {{FILE}}"
-description = "Sudoers-Regel"
+description = "Sudoers rule"
 
 [[users]]
 if_var = "PUSH_USER"
@@ -88,7 +88,7 @@ ephemeral_test_key = true
 
 [[steps]]
 if_var = "PUSH_WHITELIST_IP"
-name = "Fail2ban-Whitelist"
+name = "Fail2ban whitelist"
 sudo = true
 unless_cmd = '''test -f /etc/fail2ban/jail.d/99-deploy-whitelist.local && grep -qF -- {{PUSH_WHITELIST_IP|q}} /etc/fail2ban/jail.d/99-deploy-whitelist.local'''
 run = '''
@@ -100,5 +100,5 @@ fi
 
 [[tests]]
 if_var = "PUSH_TEST_CMD"
-name = "push: Testbefehl"
+name = "push: test command"
 run = "{{PUSH_TEST_CMD}}"

@@ -1,25 +1,26 @@
-# Vorlage: genau eine Datei auf einen Zielpfad.
+# Template: exactly one file to a target path.
 #
-# Kopieren nach recipes/<name>/, Inhalt von files/ ersetzen, Zielpfad und Werte
-# ueber ein Profil (profiles/<kunde>.env) setzen. Diese Datei bleibt datenlos:
-# alles Kundenspezifische kommt als {{PLATZHALTER}} aus dem Profil.
+# Copy to recipes/<name>/, replace the content of files/, and set the target
+# path and values through a profile (profiles/<customer>.env). This file stays
+# data-free: everything customer-specific arrives as {{PLACEHOLDERS}} from the
+# profile.
 #
-# Beispiel-Profil:
+# Example profile:
 #   RECIPE="one-script"
 #   TARGETS="srv1.example.com,srv2.example.com"
 #   BIN_DIR="/usr/local/bin"
 #
-#   ./deploy.py plan   -p <profil>
-#   ./deploy.py deploy -p <profil>
+#   ./deploy.py plan   -p <profile>
+#   ./deploy.py deploy -p <profile>
 
 [recipe]
 name = "one-script"
 version = "1"
-description = "Vorlage: eine Datei an einen Zielpfad"
+description = "Template: one file to a target path"
 
 [vars.SCRIPTS_DIR]
 default = "./scripts"
-description = "Verzeichnis der Nutzlast-Skripte (pro Profil aenderbar)"
+description = "Directory of the payload scripts (changeable per profile)"
 
 [[files]]
 src = "{{SCRIPTS_DIR}}/example.sh"
@@ -28,4 +29,4 @@ mode = "0755"
 owner = "root"
 group = "root"
 validate = "bash -n {{FILE}}"
-description = "Beispielskript (Platzhalter)"
+description = "Example script (placeholder)"

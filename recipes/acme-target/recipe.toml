@@ -1,20 +1,20 @@
-# Rezept acme-target
+# Recipe acme-target
 #
-# Macht einen Webserver zum Zertifikatsempfaenger des Zertifikats-Hosts:
-#   * Benutzer acmepush (nur Forced Command)
-#   * /usr/local/sbin/acme-target (schreibt nur /etc/ssl/<name>.crt|.key|.ca)
-#   * /etc/sudoers.d/acme-target (nur dieses Kommando)
-#   * authorized_keys mit command="sudo -n /usr/local/sbin/acme-target",restrict
+# Turns a web server into the certificate receiver of the certificate host:
+#   * user acmepush (forced command only)
+#   * /usr/local/sbin/acme-target (writes only /etc/ssl/<name>.crt|.key|.ca)
+#   * /etc/sudoers.d/acme-target (only this command)
+#   * authorized_keys with command="sudo -n /usr/local/sbin/acme-target",restrict
 #
 #   ./deploy.py plan   -r acme-target -p example-acme
 #   ./deploy.py deploy -r acme-target -p example-acme
 #
-# Werte im Profil: ACME_USER, ACME_PUSH_PUBKEY, ACME_PUSH_IP (Pflicht).
+# Profile values: ACME_USER, ACME_PUSH_PUBKEY, ACME_PUSH_IP (required).
 
 [recipe]
 name = "acme-target"
 version = "1"
-description = "Zertifikatsempfaenger fuer den Zertifikats-Host"
+description = "Certificate receiver for the certificate host"
 requires = ["bash", "openssl"]
 
 [vars.SCRIPTS_DIR]
@@ -29,7 +29,7 @@ default = ""
 [vars.ACME_PUSH_IP]
 default = ""
 required = true
-description = "Quell-IP, von der der acmepush-Key genutzt werden darf (Zertifikats-Host)"
+description = "Source IP from which the acmepush key may be used (certificate host)"
 
 [[files]]
 src = "{{SCRIPTS_DIR}}/acme-target"
@@ -39,7 +39,7 @@ owner = "root"
 group = "root"
 validate = "bash -n {{FILE}}"
 on_conflict = "overwrite"
-description = "Zertifikatsannahme (nur /etc/ssl)"
+description = "Certificate acceptance (only /etc/ssl)"
 
 [[files]]
 content = """Defaults:{{ACME_USER}} env_keep += "SSH_ORIGINAL_COMMAND"
@@ -51,7 +51,7 @@ owner = "root"
 group = "root"
 validate = "visudo -cf {{FILE}}"
 on_conflict = "overwrite"
-description = "Sudoers: nur acme-target"
+description = "Sudoers: only acme-target"
 
 [[users]]
 name = "{{ACME_USER}}"
@@ -77,12 +77,12 @@ id = "test-key"
 ephemeral_test_key = true
 
 [[tests]]
-name = "acme-target vorhanden"
+name = "acme-target present"
 run = "test -x /usr/local/sbin/acme-target && bash -n /usr/local/sbin/acme-target && echo acme-ok"
 expect = ["^acme-ok$"]
 
 [[tests]]
-name = "Forced Command antwortet"
+name = "Forced command responds"
 kind = "ssh"
 user = "{{ACME_USER}}"
 key = "ephemeral"
