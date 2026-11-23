@@ -76,6 +76,7 @@ description = "Directories acme-target may write to"
 
 [[files]]
 content = """/var/log/acme-target.log {
+    su root root
     weekly
     rotate 12
     compress
@@ -88,7 +89,7 @@ dest = "/etc/logrotate.d/acme-target"
 mode = "0644"
 owner = "root"
 group = "root"
-validate = "logrotate -d {{FILE}} >/dev/null 2>&1"
+validate = "err=$(mktemp); if ! logrotate -d {{FILE}} >\"$err\" 2>&1; then cat \"$err\"; rm -f \"$err\"; exit 1; fi; rm -f \"$err\""
 on_conflict = "overwrite"
 description = "Log rotation for acme-target"
 
