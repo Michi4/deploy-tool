@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.deploy/
+
+profiles/*.env
+!profiles/example.env
+!profiles/example-acme.env
+
+keys/*
+!keys/README.md
+!keys/example_key.pub
