@@ -1,0 +1,31 @@
+# Vorlage: genau eine Datei auf einen Zielpfad.
+#
+# Kopieren nach recipes/<name>/, Inhalt von files/ ersetzen, Zielpfad und Werte
+# ueber ein Profil (profiles/<kunde>.env) setzen. Diese Datei bleibt datenlos:
+# alles Kundenspezifische kommt als {{PLATZHALTER}} aus dem Profil.
+#
+# Beispiel-Profil:
+#   RECIPE="one-script"
+#   TARGETS="srv1.example.com,srv2.example.com"
+#   BIN_DIR="/usr/local/bin"
+#
+#   ./deploy.py plan   -p <profil>
+#   ./deploy.py deploy -p <profil>
+
+[recipe]
+name = "one-script"
+version = "1"
+description = "Vorlage: eine Datei an einen Zielpfad"
+
+[vars.SCRIPTS_DIR]
+default = "./scripts"
+description = "Verzeichnis der Nutzlast-Skripte (pro Profil aenderbar)"
+
+[[files]]
+src = "{{SCRIPTS_DIR}}/example.sh"
+dest = "{{BIN_DIR}}/example"
+mode = "0755"
+owner = "root"
+group = "root"
+validate = "bash -n {{FILE}}"
+description = "Beispielskript (Platzhalter)"

@@ -1,0 +1,104 @@
+# Rezept push: genau eine Datei.
+#
+# Wird von ./deploy.py push mit Werten gefuellt - die Datei selbst bleibt
+# datenlos. Direkt aufrufbar ist es auch:
+#   ./deploy.py plan   -r push -s PUSH_SRC=./scripts/example.sh -s PUSH_DEST=/tmp/x
+#   ./deploy.py deploy -r push -s PUSH_SRC=./foo.sh --dest ...
+#
+# Alle PUSH_*-Variablen kommen aus der Kommandozeile (-s bzw. die push-Flags),
+# nicht aus .env oder dem Profil.
+
+[recipe]
+name = "push"
+version = "1"
+description = "Einzelne Datei ausrollen (Werte von ./deploy.py push)"
+
+[vars.PUSH_SRC]
+default = "./scripts/example.sh"
+
+[vars.PUSH_DEST]
+default = "/usr/local/bin/example"
+
+[vars.PUSH_MODE]
+default = "0755"
+
+[vars.PUSH_OWNER]
+default = "root"
+
+[vars.PUSH_GROUP]
+default = "root"
+
+[vars.PUSH_VALIDATE]
+default = ""
+
+[vars.PUSH_USER]
+default = ""
+
+[vars.PUSH_USER_GROUPS]
+default = "sshallow"
+
+[vars.PUSH_KEYS]
+default = ""
+
+[vars.PUSH_SUDOERS]
+default = ""
+
+[vars.PUSH_SUDOERS_NAME]
+default = "push"
+
+[vars.PUSH_WHITELIST_IP]
+default = ""
+
+[vars.PUSH_TEST_CMD]
+default = ""
+
+[[files]]
+src = "{{PUSH_SRC}}"
+dest = "{{PUSH_DEST}}"
+mode = "{{PUSH_MODE}}"
+owner = "{{PUSH_OWNER}}"
+group = "{{PUSH_GROUP}}"
+validate = "{{PUSH_VALIDATE}}"
+description = "Einzeldatei"
+
+[[files]]
+if_var = "PUSH_SUDOERS"
+content = "{{PUSH_SUDOERS}}\n"
+dest = "/etc/sudoers.d/{{PUSH_SUDOERS_NAME}}"
+mode = "0440"
+owner = "root"
+group = "root"
+validate = "visudo -cf {{FILE}}"
+description = "Sudoers-Regel"
+
+[[users]]
+if_var = "PUSH_USER"
+name = "{{PUSH_USER}}"
+system = true
+shell = "/bin/bash"
+groups = ["{{PUSH_USER_GROUPS}}"]
+create_home = true
+lock_password = true
+
+[[authorized_keys]]
+if_var = "PUSH_KEYS"
+user = "{{PUSH_USER}}"
+keys = '''{{PUSH_KEYS}}'''
+ephemeral_test_key = true
+
+[[steps]]
+if_var = "PUSH_WHITELIST_IP"
+name = "Fail2ban-Whitelist"
+sudo = true
+unless_cmd = '''test -f /etc/fail2ban/jail.d/99-deploy-whitelist.local && grep -qF -- {{PUSH_WHITELIST_IP|q}} /etc/fail2ban/jail.d/99-deploy-whitelist.local'''
+run = '''
+if [ -d /etc/fail2ban/jail.d ]; then
+    printf '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1 %s\n' {{PUSH_WHITELIST_IP|q}} > /etc/fail2ban/jail.d/99-deploy-whitelist.local
+    timeout 8 fail2ban-client reload >/dev/null 2>&1 || true
+fi
+'''
+
+[[tests]]
+if_var = "PUSH_TEST_CMD"
+name = "push: Testbefehl"
+run = "{{PUSH_TEST_CMD}}"
