@@ -2,18 +2,21 @@
 #
 # Turns a web server into the certificate receiver of the certificate host:
 #   * user acmepush (forced command only)
-#   * /usr/local/sbin/acme-target (writes only /etc/ssl/<name>.crt|.key|.ca)
+#   * /usr/local/sbin/acme-target (v2, writes only allowed directories)
+#   * /etc/acme-target.dirs (directories the receiver may write)
 #   * /etc/sudoers.d/acme-target (only this command)
 #   * authorized_keys with command="sudo -n /usr/local/sbin/acme-target",restrict
+#   * logrotate for /var/log/acme-target.log
 #
 #   ./deploy.py plan   -r acme-target -p example-acme
 #   ./deploy.py deploy -r acme-target -p example-acme
 #
-# Profile values: ACME_USER, ACME_PUSH_PUBKEY, ACME_PUSH_IP (required).
+# Profile values: ACME_USER, ACME_USER_GROUPS, ACME_CERT_NAME,
+# ACME_PUSH_PUBKEY, ACME_PUSH_IP (required).
 
 [recipe]
 name = "acme-target"
-version = "1"
+version = "2"
 description = "Certificate receiver for the certificate host"
 requires = ["bash", "openssl"]
 
@@ -31,6 +34,14 @@ default = ""
 required = true
 description = "Source IP from which the acmepush key may be used (certificate host)"
 
+[vars.ACME_USER_GROUPS]
+default = "sshallow"
+description = "Secondary group for SSH access; must be in sshd AllowGroups"
+
+[vars.ACME_CERT_NAME]
+default = "wildcard.example.com"
+description = "Certificate basename whose existing companions are hardened"
+
 [[files]]
 src = "{{SCRIPTS_DIR}}/acme-target"
 dest = "/usr/local/sbin/acme-target"
@@ -39,10 +50,10 @@ owner = "root"
 group = "root"
 validate = "bash -n {{FILE}}"
 on_conflict = "overwrite"
-description = "Certificate acceptance (only /etc/ssl)"
+description = "Certificate acceptance (v2, allowed directories only)"
 
 [[files]]
-content = """Defaults:{{ACME_USER}} env_keep += "SSH_ORIGINAL_COMMAND"
+content = """Defaults:{{ACME_USER}} env_keep += "SSH_ORIGINAL_COMMAND SSH_CLIENT"
 {{ACME_USER}} ALL=(root) NOPASSWD: /usr/local/sbin/acme-target
 """
 dest = "/etc/sudoers.d/acme-target"
@@ -53,10 +64,39 @@ validate = "visudo -cf {{FILE}}"
 on_conflict = "overwrite"
 description = "Sudoers: only acme-target"
 
+[[files]]
+content = """/etc/ssl
+"""
+dest = "/etc/acme-target.dirs"
+mode = "0644"
+owner = "root"
+group = "root"
+on_conflict = "overwrite"
+description = "Directories acme-target may write to"
+
+[[files]]
+content = """/var/log/acme-target.log {
+    weekly
+    rotate 12
+    compress
+    missingok
+    notifempty
+    create 0640 root root
+}
+"""
+dest = "/etc/logrotate.d/acme-target"
+mode = "0644"
+owner = "root"
+group = "root"
+validate = "logrotate -d {{FILE}} >/dev/null 2>&1"
+on_conflict = "overwrite"
+description = "Log rotation for acme-target"
+
 [[users]]
 name = "{{ACME_USER}}"
 system = true
 shell = "/bin/bash"
+groups = ["{{ACME_USER_GROUPS}}"]
 create_home = true
 lock_password = true
 
@@ -65,6 +105,7 @@ user = "{{ACME_USER}}"
 keys = '''{{ACME_PUSH_PUBKEY}}'''
 command = "sudo -n /usr/local/sbin/acme-target"
 restrict = true
+options = "no-user-rc"
 from = "{{ACME_PUSH_IP}}"
 id = "cert-push"
 if_var = "ACME_PUSH_PUBKEY"
@@ -73,8 +114,19 @@ if_var = "ACME_PUSH_PUBKEY"
 user = "{{ACME_USER}}"
 command = "sudo -n /usr/local/sbin/acme-target"
 restrict = true
+options = "no-user-rc"
 id = "test-key"
 ephemeral_test_key = true
+
+[[steps]]
+name = "Secure acmepush home"
+unless_cmd = '''if [ -d /home/{{ACME_USER}} ]; then [ "$(stat -c %a /home/{{ACME_USER}})" = 700 ]; fi'''
+run = '''if [ -d /home/{{ACME_USER}} ]; then chmod 700 /home/{{ACME_USER}}; fi'''
+
+[[steps]]
+name = "Harden existing certificate companions"
+unless_cmd = '''for f in /etc/ssl/{{ACME_CERT_NAME}}.key /etc/ssl/{{ACME_CERT_NAME}}.pem /etc/ssl/{{ACME_CERT_NAME}}.keycrtca; do if [ -f "$f" ]; then [ "$(stat -c %a "$f")" = 600 ] || exit 1; fi; done'''
+run = '''for f in /etc/ssl/{{ACME_CERT_NAME}}.key /etc/ssl/{{ACME_CERT_NAME}}.pem /etc/ssl/{{ACME_CERT_NAME}}.keycrtca; do if [ -f "$f" ]; then chmod 600 "$f"; fi; done'''
 
 [[tests]]
 name = "acme-target present"
@@ -82,9 +134,24 @@ run = "test -x /usr/local/sbin/acme-target && bash -n /usr/local/sbin/acme-targe
 expect = ["^acme-ok$"]
 
 [[tests]]
+name = "Sudoers valid"
+run = "visudo -cf /etc/sudoers.d/acme-target >/dev/null && echo sudoers-ok"
+expect = ["^sudoers-ok$"]
+
+[[tests]]
+name = "Allowed directories present"
+run = "grep -qx /etc/ssl /etc/acme-target.dirs && echo dirs-ok"
+expect = ["^dirs-ok$"]
+
+[[tests]]
+name = "User locked"
+run = "passwd -S {{ACME_USER}} | awk '{print $2}'"
+expect = ["^L$"]
+
+[[tests]]
 name = "Forced command responds"
 kind = "ssh"
 user = "{{ACME_USER}}"
 key = "ephemeral"
 run = "status"
-expect = ["^ok=acme-target v1$"]
+expect = ["^ok=acme-target v2$"]

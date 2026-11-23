@@ -116,7 +116,7 @@ content is identical. Repeated runs are safe.
 
 | Recipe | Purpose |
 |---|---|
-| `acme-target` | Certificate receiver for acme-rollout: user, forced command, sudoers, acceptance under `/etc/ssl` |
+| `acme-target` | Certificate receiver v2 for acme-rollout: user, forced command, sudoers, allowed directories, companion files, logrotate |
 | `site-rescue-audit` | `site-rescue` and `site-audit` including user, sudoers, whitelist and tests |
 | `one-script` | Template: one file to a target path |
 | `push` | Ad-hoc single file, values come from the command line |
@@ -182,8 +182,11 @@ a warning, `-s TEST_AUDIT=1` enables optional long-running tests.
 - `keys/` contains only public keys; the private key stays local.
 - Sudoers files are checked with `visudo -cf` before activation.
 - Changes are backed up; critical test failures trigger a rollback.
-- The `acme-target` receiver accepts only `status` and `install <name>` and
-  writes exclusively to `/etc/ssl`.
+- The `acme-target` receiver accepts only `status` and `install <name> [dir]`,
+  writes exclusively to directories listed in `/etc/acme-target.dirs` (default
+  `/etc/ssl`), validates the tar archive and refreshes existing companion files
+  (`.crtca`, `.keycrtca`, `.pem`). Public `.crtca` stays `0644`; `.key`,
+  `.pem` and `.keycrtca` are always `0600`.
 
 ## Layout
 

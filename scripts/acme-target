@@ -1,18 +1,27 @@
 #!/bin/bash
-# acme-target - accepts a certificate from the certificate host and stores it under /etc/ssl.
+# acme-target - accepts a certificate bundle from the certificate host.
 #
 # Called exclusively through the forced command of the acmepush user:
 #   command="sudo -n /usr/local/sbin/acme-target",restrict
 # The request is in SSH_ORIGINAL_COMMAND:
 #   status
-#   install <name>    tar.gz with cert.pem, chain.pem, privkey.pem on stdin
+#   install <name> [directory]
 #
-# <name> is restricted to /etc/ssl/<name>.crt|.key|.ca (no path, no "..").
+# <name> is restricted to <directory>/<name>.crt|.key|.ca (no path, no "..").
+# <directory> defaults to /etc/ssl and must be listed in /etc/acme-target.dirs.
 # For the wildcard, <name> is "wildcard.example.com" - exactly the files the
 # vhosts already use.
 #
-# Checks: certificate readable and not expired, key matches the certificate.
-# Then apache2ctl/httpd -t and reload. If that fails, the old files are restored.
+# Existing companion files are refreshed when present:
+#   <name>.crtca    certificate + chain
+#   <name>.keycrtca key + certificate + chain
+#   <name>.pem      key + certificate
+# Owner and group are preserved. Public companions keep their mode;
+# secret-bearing companions (.key, .keycrtca, .pem) are forced to 0600.
+#
+# Checks: archive contains exactly three regular files, certificate is valid
+# and not expired, key matches the certificate. Then the web server config is
+# tested and reloaded. If that fails, all old files are restored.
 #
 # Test without a server:
 #   ACME_PREFIX=/tmp/acmet ACME_NO_RELOAD=1 ./scripts/acme-target status
@@ -23,7 +32,7 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 PREFIX="${ACME_PREFIX:-}"
 NO_RELOAD="${ACME_NO_RELOAD:-0}"
-SSLDIR="${PREFIX}/etc/ssl"
+ALLOWED_FILE="${PREFIX}/etc/acme-target.dirs"
 BK="${PREFIX}/var/backups/acme-target"
 LOG="${PREFIX}/var/log/acme-target.log"
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -31,6 +40,9 @@ TS="$(date +%Y%m%d-%H%M%S)"
 log() {
     mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
     printf '%s %s %s\n' "$(date '+%F %T')" "${SSH_CLIENT:-local}" "$*" >>"$LOG" 2>/dev/null || true
+    if [ -z "$PREFIX" ] && command -v logger >/dev/null 2>&1; then
+        logger -t acme-target -- "$*" 2>/dev/null || true
+    fi
 }
 die() { printf 'error=%s\n' "$*"; log "ERROR $*"; exit 1; }
 ok()  { log "$*"; printf 'ok=%s\n' "$*"; }
@@ -38,39 +50,132 @@ ok()  { log "$*"; printf 'ok=%s\n' "$*"; }
 read -r -a A <<< "${SSH_ORIGINAL_COMMAND:-$*}"
 CMD="${A[0]:-}"
 NAME="${A[1]:-}"
+DIR_ARG="${A[2]:-}"
 
-reload_apache() {
+allowed_dirs() {
+    if [ -f "$ALLOWED_FILE" ]; then
+        awk 'NF && $1 !~ /^#/ { print $1 }' "$ALLOWED_FILE"
+    else
+        printf '/etc/ssl\n'
+    fi
+}
+
+check_dir() {
+    _d=$1
+    case "$_d" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    case "$_d" in
+        *..*) return 1 ;;
+    esac
+    _d=${_d%/}
+    while IFS= read -r _a; do
+        [ -n "$_a" ] || continue
+        _a=${_a%/}
+        case "$_d" in
+            "$_a"|"$_a"/*) return 0 ;;
+        esac
+    done < <(allowed_dirs)
+    return 1
+}
+
+reload_web() {
     [ "$NO_RELOAD" = 1 ] && return 0
+    _did=0
+
     if command -v apache2ctl >/dev/null 2>&1; then
-        apache2ctl -t >/dev/null 2>&1 || return 1
-    elif command -v httpd >/dev/null 2>&1; then
-        httpd -t >/dev/null 2>&1 || return 1
-    elif command -v apachectl >/dev/null 2>&1; then
-        apachectl -t >/dev/null 2>&1 || return 1
+        if systemctl is-active --quiet apache2 2>/dev/null; then
+            apache2ctl -t >/dev/null 2>&1 || return 1
+            systemctl reload apache2 >/dev/null 2>&1 || return 1
+            _did=1
+        elif pgrep -x apache2 >/dev/null 2>&1; then
+            apache2ctl -t >/dev/null 2>&1 || return 1
+            apache2ctl graceful >/dev/null 2>&1 || return 1
+            _did=1
+        else
+            apache2ctl -t >/dev/null 2>&1 || return 1
+        fi
     fi
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl reload apache2 >/dev/null 2>&1 && return 0
-        systemctl reload httpd >/dev/null 2>&1 && return 0
+
+    if command -v httpd >/dev/null 2>&1; then
+        if systemctl is-active --quiet httpd 2>/dev/null; then
+            httpd -t >/dev/null 2>&1 || return 1
+            systemctl reload httpd >/dev/null 2>&1 || return 1
+            _did=1
+        elif pgrep -x httpd >/dev/null 2>&1; then
+            httpd -t >/dev/null 2>&1 || return 1
+            httpd -k graceful >/dev/null 2>&1 || return 1
+            _did=1
+        else
+            httpd -t >/dev/null 2>&1 || return 1
+        fi
     fi
-    if command -v apache2ctl >/dev/null 2>&1; then apache2ctl graceful >/dev/null 2>&1; return $?; fi
-    if command -v apachectl >/dev/null 2>&1; then apachectl graceful >/dev/null 2>&1; return $?; fi
+
+    if command -v nginx >/dev/null 2>&1; then
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+            nginx -t >/dev/null 2>&1 || return 1
+            systemctl reload nginx >/dev/null 2>&1 || return 1
+            _did=1
+        elif pgrep -x nginx >/dev/null 2>&1; then
+            nginx -t >/dev/null 2>&1 || return 1
+            nginx -s reload >/dev/null 2>&1 || return 1
+            _did=1
+        else
+            nginx -t >/dev/null 2>&1 || return 1
+        fi
+    fi
+
+    [ "$_did" = 1 ] || log "no active web server reloaded (files installed)"
     return 0
 }
 
 restore_old() {
-    local ext
-    for ext in crt key ca; do
-        if [ -f "$BK/$NAME.$ext.$TS" ]; then
-            cp -a "$BK/$NAME.$ext.$TS" "$SSLDIR/$NAME.$ext"
+    _ext=
+    for _ext in crt key ca crtca keycrtca pem; do
+        rm -f "$SSLDIR/$NAME.$_ext.new" 2>/dev/null || true
+        if [ -f "$BK/$NAME.$_ext.$TS" ]; then
+            cp -a "$BK/$NAME.$_ext.$TS" "$SSLDIR/$NAME.$_ext"
         else
-            rm -f "$SSLDIR/$NAME.$ext"
+            rm -f "$SSLDIR/$NAME.$_ext"
         fi
+        case "$_ext" in
+            key|keycrtca|pem)
+                if [ -f "$SSLDIR/$NAME.$_ext" ]; then
+                    chmod 600 "$SSLDIR/$NAME.$_ext"
+                fi
+                ;;
+        esac
     done
+}
+
+write_derived() {
+    _ext=$1
+    _src=$2
+    _dest="$SSLDIR/$NAME.$_ext"
+    [ -f "$_dest" ] || return 0
+
+    case "$_ext" in
+        keycrtca|pem) _mode=0600 ;;
+        *)            _mode=0644 ;;
+    esac
+
+    install -m "$_mode" "$_src" "$_dest.new.$$" || return 1
+    chown --reference="$_dest" "$_dest.new.$$" 2>/dev/null || true
+    mv -f "$_dest.new.$$" "$_dest" || return 1
+
+    case "$_ext" in
+        keycrtca|pem)
+            chmod 600 "$_dest" || return 1
+            [ "$(stat -c '%a' "$_dest" 2>/dev/null)" = 600 ] || return 1
+            ;;
+    esac
+    return 0
 }
 
 case "$CMD" in
 status)
-    printf 'ok=acme-target v1\n'
+    printf 'ok=acme-target v2\n'
     exit 0
     ;;
 
@@ -78,43 +183,85 @@ install)
     [[ "$NAME" =~ ^[a-z0-9][a-z0-9.-]{0,200}$ ]] || die "invalid name"
     [[ "$NAME" != *..* ]] || die "invalid name"
 
-    umask 077
-    T=$(mktemp -d) || die "mktemp failed"
-    trap 'rm -rf "$T"' EXIT
-    tar --no-same-owner --no-same-permissions -xzf - -C "$T" || die "invalid tar archive"
-    [ -s "$T/cert.pem" ] || die "cert.pem missing"
-    [ -s "$T/chain.pem" ] || die "chain.pem missing"
-    [ -s "$T/privkey.pem" ] || die "privkey.pem missing"
+    DIR="${DIR_ARG:-/etc/ssl}"
+    check_dir "$DIR" || die "directory not allowed: $DIR"
+    DIR=${DIR%/}
+    SSLDIR="${PREFIX}${DIR}"
 
-    openssl x509 -in "$T/cert.pem" -noout -checkend 0 >/dev/null 2>&1 \
-        || die "certificate invalid or expired"
-    a=$(openssl x509 -in "$T/cert.pem" -noout -pubkey 2>/dev/null | openssl sha256 2>/dev/null)
-    b=$(openssl pkey -in "$T/privkey.pem" -pubout 2>/dev/null | openssl sha256 2>/dev/null)
-    [ -n "$a" ] && [ "$a" = "$b" ] || die "privkey.pem does not match the certificate"
-
-    mkdir -p "$BK" "$SSLDIR"
-    for ext in crt key ca; do
-        [ -f "$SSLDIR/$NAME.$ext" ] && cp -a "$SSLDIR/$NAME.$ext" "$BK/$NAME.$ext.$TS"
+    # Correct legacy world-readable secret companions before backup/install.
+    for _ext in key keycrtca pem; do
+        if [ -f "$SSLDIR/$NAME.$_ext" ]; then
+            chmod 600 "$SSLDIR/$NAME.$_ext"
+        fi
     done
 
-    install -m 0644 "$T/cert.pem" "$SSLDIR/$NAME.crt.new"
-    install -m 0600 "$T/privkey.pem" "$SSLDIR/$NAME.key.new"
-    install -m 0644 "$T/chain.pem" "$SSLDIR/$NAME.ca.new"
-    mv -f "$SSLDIR/$NAME.crt.new" "$SSLDIR/$NAME.crt"
-    mv -f "$SSLDIR/$NAME.key.new" "$SSLDIR/$NAME.key"
-    mv -f "$SSLDIR/$NAME.ca.new" "$SSLDIR/$NAME.ca"
+    if command -v flock >/dev/null 2>&1; then
+        LOCK="${PREFIX}/var/lock/acme-target.lock"
+        mkdir -p "${LOCK%/*}" 2>/dev/null || true
+        exec 9>"$LOCK" || die "cannot open lock"
+        flock -w 60 9 || die "busy"
+    fi
+
+    umask 077
+    ulimit -f 4096 2>/dev/null || true
+    T=$(mktemp -d) || die "mktemp failed"
+    trap 'rm -rf "$T"' EXIT
+
+    TAR="$T/bundle.tgz"
+    cat > "$TAR" || die "bundle too large or read failed"
+    [ -s "$TAR" ] || die "empty bundle"
+
+    _list=$(tar -tzf "$TAR" 2>/dev/null) || die "invalid tar archive"
+    _names=$(printf '%s\n' "$_list" | sed 's|^\./||' | sort)
+    _want=$(printf '%s\n' cert.pem chain.pem privkey.pem | sort)
+    [ "$_names" = "$_want" ] || die "unexpected archive members"
+    _types=$(tar -tvzf "$TAR" 2>/dev/null | awk '{ print substr($1,1,1) }' | sort -u)
+    [ "$_types" = "-" ] || die "archive contains non-regular files"
+
+    mkdir -p "$T/x" || die "mktemp failed"
+    tar --no-same-owner --no-same-permissions -xzf "$TAR" -C "$T/x" || die "invalid tar archive"
+    for _f in cert.pem chain.pem privkey.pem; do
+        [ -f "$T/x/$_f" ] && [ ! -L "$T/x/$_f" ] || die "$_f missing or not regular"
+    done
+
+    openssl x509 -in "$T/x/cert.pem" -noout -checkend 0 >/dev/null 2>&1 \
+        || die "certificate invalid or expired"
+    _a=$(openssl x509 -in "$T/x/cert.pem" -noout -pubkey 2>/dev/null | openssl sha256 2>/dev/null)
+    _b=$(openssl pkey -in "$T/x/privkey.pem" -pubout 2>/dev/null | openssl sha256 2>/dev/null)
+    [ -n "$_a" ] && [ "$_a" = "$_b" ] || die "privkey.pem does not match the certificate"
+
+    mkdir -p "$BK" "$SSLDIR" || die "cannot create $SSLDIR"
+    for _ext in crt key ca crtca keycrtca pem; do
+        [ -f "$SSLDIR/$NAME.$_ext" ] && cp -a "$SSLDIR/$NAME.$_ext" "$BK/$NAME.$_ext.$TS"
+    done
+
+    install -m 0644 "$T/x/cert.pem" "$SSLDIR/$NAME.crt.new" || die "install failed"
+    install -m 0600 "$T/x/privkey.pem" "$SSLDIR/$NAME.key.new" || die "install failed"
+    install -m 0644 "$T/x/chain.pem" "$SSLDIR/$NAME.ca.new" || die "install failed"
+    mv -f "$SSLDIR/$NAME.crt.new" "$SSLDIR/$NAME.crt" || die "install failed"
+    mv -f "$SSLDIR/$NAME.key.new" "$SSLDIR/$NAME.key" || die "install failed"
+    mv -f "$SSLDIR/$NAME.ca.new" "$SSLDIR/$NAME.ca" || die "install failed"
+
+    cat "$T/x/cert.pem" "$T/x/chain.pem" > "$T/crtca.pem"
+    cat "$T/x/privkey.pem" "$T/x/cert.pem" "$T/x/chain.pem" > "$T/keycrtca.pem"
+    cat "$T/x/privkey.pem" "$T/x/cert.pem" > "$T/pem.pem"
+    write_derived crtca "$T/crtca.pem" || die "install failed"
+    write_derived keycrtca "$T/keycrtca.pem" || die "install failed"
+    write_derived pem "$T/pem.pem" || die "install failed"
+
     command -v restorecon >/dev/null 2>&1 && restorecon "$SSLDIR/$NAME".crt "$SSLDIR/$NAME".key "$SSLDIR/$NAME".ca >/dev/null 2>&1 || true
 
-    if ! reload_apache; then
+    if ! reload_web; then
         restore_old
-        die "apache config test/reload failed (old files restored)"
+        reload_web >/dev/null 2>&1 || true
+        die "web server config test/reload failed (old files restored)"
     fi
 
     ls -1t "$BK/$NAME".*.* 2>/dev/null | sed -e '1,30d' | xargs -r rm -f
-    ok "installed name=$NAME"
+    ok "installed name=$NAME dir=$DIR"
     ;;
 
 *)
-    die "allowed: status | install <name>"
+    die "allowed: status | install <name> [directory]"
     ;;
 esac
