@@ -427,7 +427,7 @@ def load_recipe(path: Path) -> Recipe:
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"{path}: TOML-Syntaxfehler: {e}") from None
+        raise ConfigError(f"{path}: TOML syntax error: {e}") from None
     return validate_recipe(path, raw)
 
 def find_recipe(spec: str) -> Path:
@@ -526,7 +526,7 @@ def load_inventory(path: Path | None) -> dict:
     try:
         inv = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as e:
-        raise ConfigError(f"Inventar {path}: {e}") from None
+        raise ConfigError(f"Inventory {path}: {e}") from None
     return inv
 
 def resolve_targets(spec: str, S: dict[str, str], inv: dict) -> list[Target]:
@@ -603,7 +603,7 @@ def ssh_hint(err: str) -> str:
         ("could not resolve", "DNS resolution for hostname failed."),
         ("host key verification failed", "Host key does not match known_hosts."),
         ("remote host identification has changed", "Host key has changed."),
-        ("a password is required", "sudo verlangt Passwort (NOPASSWD einrichten)."),
+        ("a password is required", "sudo requires a password (set up NOPASSWD)."),
         ("is not in the sudoers", "SSH user has no sudo rights.")
     ]
     for needle, text in table:
@@ -719,7 +719,7 @@ class Ephemeral:
                 )
                 if p.returncode != 0:
                     shutil.rmtree(d, ignore_errors=True)
-                    raise ConfigError(f"ssh-keygen fehlgeschlagen: {p.stderr.strip() or p.stdout.strip()}")
+                    raise ConfigError(f"ssh-keygen failed: {p.stderr.strip() or p.stdout.strip()}")
                 cls._dir = d
             return f"{cls._dir}/id", Path(f"{cls._dir}/id.pub").read_text().strip()
 
@@ -951,7 +951,7 @@ class HostRunner:
             hint = ssh_hint(p.err) if p.rc in (1, 124, 255) else ""
             detail = short(p.err or p.out, 600)
             raise StepFailed(
-                f"{what} fehlgeschlagen (rc={p.rc})" + (f" - {hint}" if hint else "") +
+                f"{what} failed (rc={p.rc})" + (f" - {hint}" if hint else "") +
                 (f"\n{detail}" if detail else "")
             )
         return p
@@ -992,7 +992,7 @@ class HostRunner:
                 self.log.log("FAIL", f"Required programs missing: {miss or '?'}")
                 ok = False
             else:
-                self.log.log("PASS", f"Programme verifiziert ({', '.join(r.requires)})")
+                self.log.log("PASS", f"Programs verified ({', '.join(r.requires)})")
 
         for pf in r.preflight:
             if not self.var_ok(pf):
@@ -1389,7 +1389,7 @@ class HostRunner:
             v = self.sh(script)
             if v.rc != 0:
                 raise StepFailed(f"Validation of {what} failed (rc={v.rc}):\n{short(v.err or v.out, 600)}")
-            self.log.log("PASS", f"Validiert: {what}" if it.spec.get("validate") or it.extra.get("validate") else f"Bereitgestellt: {what}")
+            self.log.log("PASS", f"Validated: {what}" if it.spec.get("validate") or it.extra.get("validate") else f"Deployed: {what}")
 
     def runs_root(self) -> str:
         return f"{self.state}/{self.recipe.name}/runs"
@@ -1547,7 +1547,7 @@ class HostRunner:
 
     def adopt_file(self, it: Item) -> None:
         self.record({"type": "reg", "dest": it.label, "reg_before": self.reg_before(it)})
-        self.must(self.sh(self.reg_write_script(it)), f"Registriere {it.label}")
+        self.must(self.sh(self.reg_write_script(it)), f"Register {it.label}")
 
     def apply_remove(self, it: Item) -> None:
         d, rd = q(it.label), q(self.run_dir)
@@ -1557,7 +1557,7 @@ class HostRunner:
             "meta_before": it.remote_meta, "reg_before": self.reg_before(it)
         }
         self.record(op)
-        self.must(self.sh(f'cp -a {d} {rd}/{op["backup"]} && rm -f {d} {q(rf)}'), f"Entferne {it.label}")
+        self.must(self.sh(f'cp -a {d} {rd}/{op["backup"]} && rm -f {d} {q(rf)}'), f"Remove {it.label}")
         self.changed_any = True
 
     def apply_items(self) -> None:
@@ -1566,7 +1566,7 @@ class HostRunner:
                 self.log.log("SKIP", f"{it.extra['title']} (user skipped)")
                 continue
             if it.conflict and it.decision != "overwrite":
-                self.log.log("SKIP", f"{it.label}: Uebersprungen laut Richtlinie")
+                self.log.log("SKIP", f"{it.label}: Skipped by policy")
                 self.skipped.append(it)
                 if it.kind == "user":
                     self.skipped_users.add(it.label)
@@ -1585,9 +1585,9 @@ class HostRunner:
                 if it.status == "ok":
                     if it.kind == "file" and it.reg_recipe == "":
                         self.adopt_file(it)
-                        self.log.log("OK", f"{it.label}: Unveraendert (Besitz registriert)")
+                        self.log.log("OK", f"{it.label}: Unchanged (ownership registered)")
                     else:
-                        self.log.log("OK", f"{title}: Unveraendert")
+                        self.log.log("OK", f"{title}: Unchanged")
                     continue
                 self.apply_file_like(it)
                 w = {"create": "newly created", "update": "updated", "meta": "permissions adjusted"}[it.status]
@@ -1751,7 +1751,7 @@ class HostRunner:
                         problems.append(f"Expected pattern not found: /{pat}/")
                 for pat in ([t["expect_not"]] if isinstance(t.get("expect_not"), str) else t.get("expect_not", [])):
                     if re.search(pat, proc.out + "\n" + proc.err, re.M):
-                        problems.append(f"Unerwartetes Muster gefunden: /{pat}/")
+                        problems.append(f"Unexpected pattern found: /{pat}/")
 
                 ok = len(problems) == 0
                 if ok:
@@ -1801,10 +1801,10 @@ class HostRunner:
                         try:
                             self.run_step(st, i + 1, record_undo=False)
                         except StepFailed as e:
-                            self.log.log("WARN", f"Cleanup fehlgeschlagen: {e}")
+                            self.log.log("WARN", f"Cleanup failed: {e}")
 
                     if not tests_ok and (getattr(self.opts, "rollback_on_fail", False) or truthy(self.cfg.S["ROLLBACK_ON_FAIL"])):
-                        self.log.log("WARN", "Tests fehlgeschlagen - Rollback (--rollback-on-fail aktiv)")
+                        self.log.log("WARN", "Tests failed - rollback (--rollback-on-fail active)")
                         self.rollback_ops(self.ops)
                         self.save_manifest("rolled-back")
                     return tests_ok
@@ -1838,8 +1838,8 @@ class HostRunner:
                 if t == "remove":
                     d = q(op["path"])
                     rf = reg_file(self.state, op["path"])
-                    self.must(self.sh(f'cp -a {rd}/{op["backup"]} {d} && rm -f {q(rf)}'), f"Wiederherstellen {op['path']}")
-                    self.log.log("CHG", f"Wiederhergestellt: {op['path']}")
+                    self.must(self.sh(f'cp -a {rd}/{op["backup"]} {d} && rm -f {q(rf)}'), f"Restore {op['path']}")
+                    self.log.log("CHG", f"Restored: {op['path']}")
                     continue
                 if t == "block":
                     d = q(op["dest"])
@@ -1858,9 +1858,9 @@ class HostRunner:
                 d = q(op["dest"])
                 rf = reg_file(self.state, op["dest"])
                 if op["action"] == "create":
-                    self.must(self.sh(f"rm -f {d} {q(rf)}"), f"Entferne {op['dest']}")
+                    self.must(self.sh(f"rm -f {d} {q(rf)}"), f"Remove {op['dest']}")
                 elif op.get("backup"):
-                    self.must(self.sh(f'cp -a {rd}/{op["backup"]} {d} && rm -f {q(rf)}'), f"Wiederherstellen {op['dest']}")
+                    self.must(self.sh(f'cp -a {rd}/{op["backup"]} {d} && rm -f {q(rf)}'), f"Restore {op['dest']}")
                 self.log.log("CHG", f"Reset: {op['dest']}")
             except StepFailed as e:
                 self.log.log("FAIL", f"Rollback step failed: {e}")
@@ -1886,7 +1886,7 @@ class HostRunner:
                 self.sh(f"rm -rf {q(self.stage)}", strict=False, timeout=15)
                 self.stage = ""
         if not ok:
-            self.err = "Tests fehlgeschlagen"
+            self.err = "Tests failed"
         return ok
 
     def cmd_plan(self) -> bool:
@@ -1904,7 +1904,7 @@ class HostRunner:
             if it.conflict:
                 pol = it.spec.get("on_conflict", "ask")
                 pol = self.cfg.S["ON_CONFLICT"] if pol == "ask" else pol
-                self.log.log("ASK" if pol == "ask" else "INFO", f"Konflikt ({pol}): {it.label} -> {it.conflict['msg']}")
+                self.log.log("ASK" if pol == "ask" else "INFO", f"Conflict ({pol}): {it.label} -> {it.conflict['msg']}")
             if it.status == "update" and it.kind == "file" and getattr(self.opts, "diff", False):
                 self.log.log("INFO", "Diff", self.diff_text(it))
         return True
@@ -1923,7 +1923,7 @@ class HostRunner:
                 all_ok = False
                 drift += 1
         if drift:
-            self.err = f"{drift} Abweichung(en)"
+            self.err = f"{drift} deviation(s)"
         return all_ok
 
 class Decider:
@@ -1971,9 +1971,9 @@ class Decider:
         while True:
             UI.emit(f"\n{UI.paint('ASK', 'CONFLICT')} on {r.t.name} ({it.conflict['kind']}):\n  Target: {it.label}\n  Info: {it.conflict['msg']}")
             ans = input(
-                f"  [y] {action}              [n] Ueberspringen\n"
+                f"  [y] {action}              [n] Skip\n"
                 f"  [Y] {action} on ALL    [N] Skip on ALL\n"
-                f"  [d] Diff anzeigen         [q] Abbrechen > "
+                f"  [d] Show diff            [q] Abort > "
             ).strip()
             if ans == "y":
                 return "overwrite"
@@ -2044,7 +2044,7 @@ def print_summary_table(runners: list[HostRunner]) -> None:
         test_colored = UI.paint(test_tag, f"{test_str:<6}")
 
         if not r.ok:
-            details = UI.paint("FAIL", r.err.splitlines()[0] if r.err else "Fehlgeschlagen")
+            details = UI.paint("FAIL", r.err.splitlines()[0] if r.err else "Failed")
         elif r.log.changed_items:
             details = UI.paint("CHG", ", ".join(r.log.changed_items))
         else:
@@ -2101,7 +2101,7 @@ def discover_profiles() -> dict[str, Path]:
 def list_profiles() -> int:
     profs = discover_profiles()
     if not profs:
-        UI.emit(UI.paint("WARN", "No profiles found.") + " Erwartet: profiles/<name>.env")
+        UI.emit(UI.paint("WARN", "No profiles found.") + " Expected: profiles/<name>.env")
         return 1
     base = parse_dotenv(Path.cwd() / ".env") if (Path.cwd() / ".env").is_file() else {}
     UI.emit(f"\n{'PROFILE':<20} {'RECIPE':<24} {'TARGETS':<7} ACCESS")
@@ -2274,7 +2274,7 @@ def cmd_selftest(S: dict[str, str], do_ssh: bool) -> int:
             try:
                 targets = resolve_targets(S.get("TARGETS", ""), S, load_inventory(inv_path))
             except ConfigError as e:
-                add("SSH-Erreichbarkeit", False, str(e))
+                add("SSH reachability", False, str(e))
                 targets = []
             for t in targets:
                 tr = LocalTransport(S) if t.local else SSHTransport(t, S, ctl)
@@ -2590,7 +2590,7 @@ def make_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentP
         "push", parents=[common],
         help="Deploy a single script/file",
         description="Uploads a file or script atomically to the servers, creates users, sudoers and SSH keys.",
-        epilog="Beispiel: ./deploy.py push ./site-rescue --dest /usr/local/bin/site-rescue -t web1.example.com --overwrite"
+        epilog="Example: ./deploy.py push ./site-rescue --dest /usr/local/bin/site-rescue -t web1.example.com --overwrite"
     )
     pu.add_argument("file", nargs="?", default=None, help="Local path to the script")
     pu.add_argument("--dest", default=None, help="Target path on the server (e.g. /usr/local/bin/script)")
